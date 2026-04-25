@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions      Session[]
+  intents       Intent[]
+  memoryProfile MemoryProfile?
+  events        Event[]
+
+  @@map("users")
+}
+
+model Session {
+  id              String    @id @default(cuid())
+  userId          String
+  token           String    @unique
+  expiresAt       DateTime
+  createdAt       DateTime  @default(now())
+  lastActiveAt    DateTime?
+  deviceUserAgent String?
+  deviceIp        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Intent {
+  id           String   @id @default(cuid())
+  userId       String
+  rawInput     String
+  budgetCents  Int
+  zipCode      String
+  servings     Int      @default(4)
+  dietaryFlags String[] @default([])
+  mealCount    Int      @default(5)
+  createdAt    DateTime @default(now())
+
+  user  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  meals Meal[]
+
+  @@index([userId])
+  @@map("intents")
+}
+
+model Meal {
+  id                  String   @id @default(cuid())
+  intentId            String
+  name                String
+  description         String
+  servings            Int
+  prepTimeMinutes     Int
+  cookTimeMinutes     Int
+  dietaryFlags        String[] @default([])
+  estimatedCostCents  Int
+  ingredientsJson     Json
+  approved            Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  intent Intent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  carts  Cart[]
+
+  @@index([intentId])
+  @@map("meals")
+}
+
+model Cart {
+  id                    String   @id @default(cuid())
+  userId                String
+  mealId                String?
+  provider              String
+  storeId               String
+  storeName             String
+  itemsJson             Json
+  subtotalCents         Int
+  estimatedDeliveryFee  Int
+  estimatedTotalCents   Int
+  checkoutUrl           String?
+  missingIngredients    String[] @default([])
+  coverageScore         Float
+  createdAt             DateTime @default(now())
+
+  meal Meal? @relation(fields: [mealId], references: [id])
+
+  @@index([userId])
+  @@map("carts")
+}
+
+model MemoryProfile {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  pastIntents         Json     @default("[]")
+  acceptedMeals       Json     @default("[]")
+  rejectedSubs        Json     @default("[]")
+  dietaryPatterns     Json     @default("{}")
+  budgetBehavior      Json     @default("{}")
+  preferredStores     Json     @default("[]")
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("memory_profiles")
+}
+
+model Checkpoint {
+  id        String   @id @default(cuid())
+  flowId    String
+  step      String
+  status    String   @default("pending")
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([flowId, step])
+  @@map("checkpoints")
+}
+
+model Job {
+  id          String   @id @default(cuid())
+  type        String
+  status      String   @default("pending")
+  payload     Json
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+  runAt       DateTime @default(now())
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, runAt])
+  @@index([type])
+  @@map("jobs")
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  type      String
+  userId    String
+  zipCode   String?
+  payload   Json
+  timestamp DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([timestamp])
+  @@map("events")
+}

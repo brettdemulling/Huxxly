@@ -1,0 +1,44 @@
+{
+  "name": "autopilot-grocery",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "stress": "STRESS_RUN=true STRESS_TIME_SCALE=0.05 node_modules/.bin/jiti tests/load/stressTestRunner.ts",
+    "stress:realtime": "STRESS_RUN=true STRESS_TIME_SCALE=1 node_modules/.bin/jiti tests/load/stressTestRunner.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "@types/js-cookie": "^3.0.6",
+    "@types/pg": "^8.20.0",
+    "@types/uuid": "^10.0.0",
+    "@upstash/qstash": "^2.10.1",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.37.0",
+    "anthropic": "^0.0.0",
+    "iron-session": "^8.0.4",
+    "js-cookie": "^3.0.5",
+    "next": "16.2.4",
+    "pg": "^8.20.0",
+    "prisma": "^7.8.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "uuid": "^14.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
