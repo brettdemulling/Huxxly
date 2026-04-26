@@ -87,3 +87,7 @@ export function shouldShowImage(media: ProductMedia): boolean {
 }
 
 export { CONFIDENCE_THRESHOLD };
+
+export function prefetchImages(products: ProductCanonical[], count = 5): ProductMedia[] {
+  return products.slice(0, count).map(resolveProductMedia);
+}
