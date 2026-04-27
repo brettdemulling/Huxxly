@@ -10,7 +10,7 @@ export type CheckoutEventType =
 
 export type CheckoutEvent = {
   userId: string;
-  sessionId: string;
+  sessionId?: string;
   store?: string;
   cartId?: string;
   eventType: CheckoutEventType;
