@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
     "stress": "STRESS_RUN=true STRESS_TIME_SCALE=0.05 node_modules/.bin/jiti tests/load/stressTestRunner.ts",
