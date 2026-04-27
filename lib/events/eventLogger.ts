@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { EventType } from '@/lib/core/canonicalModels';
+import type { EventPayload } from '@/lib/types/events';
 
 export interface LoggedEvent {
   id: string;
@@ -49,7 +50,7 @@ export async function getEvents(userId: string, limit = 50): Promise<LoggedEvent
     type: r.type as EventType,
     userId: r.userId,
     zipCode: r.zipCode ?? undefined,
-    payload: r.payload as Record<string, unknown>,
+    payload: r.payload as EventPayload,
     timestamp: r.timestamp,
   }));
 }

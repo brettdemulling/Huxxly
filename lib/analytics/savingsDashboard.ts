@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import type { EventPayload, EventRow } from '@/lib/types/events';
 
 export type SavingsRecord = {
   userId: string;
@@ -57,8 +58,8 @@ async function fetchSavingsEvents(sinceMs: number): Promise<number[]> {
     orderBy: { timestamp: 'desc' },
     take: 5000,
   });
-  return rows.map((r: any) => {
-    const p = r.payload as Record<string, unknown>;
+  return rows.map((r: EventRow) => {
+    const p = r.payload as EventPayload;
     return typeof p.savings === 'number' ? p.savings : 0;
   }).filter((v) => v > 0);
 }

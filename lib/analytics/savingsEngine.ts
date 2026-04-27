@@ -1,4 +1,5 @@
 import type { CartCanonical, SavingsData } from '@/lib/core/canonicalModels';
+import type { EventPayload } from '@/lib/types/events';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/events/eventLogger';
 import { recordSavings } from '@/lib/analytics/savingsDashboard';
@@ -67,8 +68,8 @@ async function computeLifetimeSavings(userId: string): Promise<number> {
       take: 50,
     });
 
-    return events.reduce((total, e) => {
-      const p = e.payload as Record<string, unknown>;
+    return events.reduce((total: number, e) => {
+      const p = e.payload as EventPayload;
       return total + (typeof p.savingsCents === 'number' ? p.savingsCents : 0);
     }, 0);
   } catch {
@@ -86,7 +87,7 @@ async function computeAverageSavingsPct(userId: string, currentPct: number): Pro
 
     const pcts = events
       .map((e) => {
-        const p = e.payload as Record<string, unknown>;
+        const p = e.payload as EventPayload;
         return typeof p.savingsPercent === 'number' ? p.savingsPercent : null;
       })
       .filter((v): v is number => v !== null);
