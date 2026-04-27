@@ -1,13 +1,12 @@
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
+import { runtime } from '@/lib/config/runtime';
 
-const _rlUrl   = process.env.UPSTASH_REDIS_REST_URL   || '';
-const _rlToken = process.env.UPSTASH_REDIS_REST_TOKEN || '';
-if (!_rlUrl || !_rlToken) {
-  console.warn('[rateLimit] Rate limiting disabled: UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN not set.');
-}
-const redis = new Redis({ url: _rlUrl, token: _rlToken });
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || 'https://mock.upstash.io',
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || 'mock-token',
+});
 
 // ─── Cost weights (relative compute/AI cost per call) ────────────────────────
 // Higher weight = stricter limiting. Global token budget = 60/min.
@@ -73,8 +72,8 @@ export async function checkRateLimit(
   endpoint: LimiterKey = 'default',
   userId?: string,
 ): Promise<NextResponse | null> {
-  // Fail open in sim mode or when Redis is unavailable
-  if (process.env.DEV_SIMULATION === 'true') return null;
+  // Fail open when Redis is disabled or in sim mode
+  if (!runtime.isRedisEnabled || runtime.isDev) return null;
 
   const limiter = limiters[endpoint] ?? limiters.default;
   const clientId = getClientId(request);

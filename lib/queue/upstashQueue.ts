@@ -1,10 +1,9 @@
 import { Client } from '@upstash/qstash';
 import { createJobRecord, emitJobEvent } from './eventQueue';
+import { runtime } from '@/lib/config/runtime';
 
 function getQStashClient() {
-  const token = process.env.QSTASH_TOKEN || '';
-  if (!token) console.warn('[upstashQueue] QStash disabled: QSTASH_TOKEN not set.');
-  return new Client({ token });
+  return new Client({ token: process.env.QSTASH_TOKEN || '' });
 }
 
 export interface FlowJobPayload {
@@ -31,12 +30,12 @@ export async function dispatchFlowJob(
   await emitJobEvent(jobId, 'INTENT_RECEIVED', userId, { rawInput, zipCode, flowId });
 
   const payload: FlowJobPayload = { jobId, rawInput, zipCode, userId, flowId };
-  const workerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/worker/flow`;
-
-  if (!process.env.QSTASH_TOKEN || !process.env.NEXT_PUBLIC_APP_URL) {
-    console.warn('[upstashQueue] Skipping QStash dispatch: missing QSTASH_TOKEN or NEXT_PUBLIC_APP_URL.');
+  if (!runtime.isQStashEnabled) {
+    console.warn('[upstashQueue] Skipping QStash dispatch: QSTASH_TOKEN or NEXT_PUBLIC_APP_URL not set.');
     return jobId;
   }
+
+  const workerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/worker/flow`;
 
   await getQStashClient().publishJSON({
     url: workerUrl,

@@ -22,16 +22,16 @@ import { runAutopilot } from '@/lib/autopilot/autopilotEngine';
 import { buildSavingsData } from '@/lib/analytics/savingsEngine';
 import { markPending } from '@/lib/safety/undoEngine';
 import { detectRepeatPattern } from '@/lib/recommendation/repeatEngine';
+import { runtime } from '@/lib/config/runtime';
 
-const _aiKey = process.env.ANTHROPIC_API_KEY || '';
-if (!_aiKey) {
-  console.warn('[flowEngine] AI disabled: ANTHROPIC_API_KEY not set.');
-}
-const anthropic = new Anthropic({ apiKey: _aiKey });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
 // ─── Step 1: Parse intent (versioned prompt) ──────────────────────────────────
 
 export async function parseIntent(rawInput: string, zip: string, userId: string): Promise<Intent> {
+  if (!runtime.isAIEnabled) {
+    throw new Error('AI service unavailable: ANTHROPIC_API_KEY not configured.');
+  }
   const { model, maxTokens, system } = getCallParams('intent_parse');
   const message = buildPromptMessage('intent_parse', { input: rawInput });
 
@@ -71,6 +71,9 @@ export async function generateMeals(
   intent: Intent,
   memoryContext: string,
 ): Promise<MealCanonical[]> {
+  if (!runtime.isAIEnabled) {
+    throw new Error('AI service unavailable: ANTHROPIC_API_KEY not configured.');
+  }
   const cached = await cache.getMealPlan(intent.id);
   if (cached) {
     return JSON.parse(cached as string) as MealCanonical[];

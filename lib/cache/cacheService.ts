@@ -1,6 +1,7 @@
 import { Redis } from '@upstash/redis';
+import { runtime } from '@/lib/config/runtime';
 
-const IS_SIM = process.env.DEV_SIMULATION === 'true';
+const IS_SIM = runtime.isDev;
 
 // Lazy init — Redis constructor needs valid-looking creds to not throw at runtime
 let _redis: Redis | null = null;
@@ -15,17 +16,17 @@ function getRedis(): Redis {
 }
 
 async function safeGet(k: string): Promise<unknown> {
-  if (IS_SIM) return null;
+  if (IS_SIM || !runtime.isRedisEnabled) return null;
   try { return await getRedis().get(k); } catch { return null; }
 }
 
 async function safeSet(k: string, value: unknown, ex: number): Promise<void> {
-  if (IS_SIM) return;
+  if (IS_SIM || !runtime.isRedisEnabled) return;
   try { await getRedis().set(k, JSON.stringify(value), { ex }); } catch { /* cache miss is fine */ }
 }
 
 async function safeDel(k: string): Promise<void> {
-  if (IS_SIM) return;
+  if (IS_SIM || !runtime.isRedisEnabled) return;
   try { await getRedis().del(k); } catch { /* best effort */ }
 }
 
@@ -76,13 +77,13 @@ export const cacheService = {
   },
 
   async invalidateProductsForZip(zip: string): Promise<void> {
-    if (IS_SIM) return;
+    if (IS_SIM || !runtime.isRedisEnabled) return;
     const { onInventoryUpdate } = await import('./invalidationRules');
     await onInventoryUpdate(zip, '*');
   },
 
   async invalidateMealsForUser(userId: string): Promise<void> {
-    if (IS_SIM) return;
+    if (IS_SIM || !runtime.isRedisEnabled) return;
     const { onMemoryUpdate } = await import('./invalidationRules');
     await onMemoryUpdate(userId);
   },
@@ -92,7 +93,7 @@ export const cacheService = {
   },
 
   async ping(): Promise<boolean> {
-    if (IS_SIM) return true;
+    if (IS_SIM || !runtime.isRedisEnabled) return false;
     try { await getRedis().ping(); return true; } catch { return false; }
   },
 };

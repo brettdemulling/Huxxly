@@ -1,6 +1,7 @@
 import { Redis } from '@upstash/redis';
+import { runtime } from '@/lib/config/runtime';
 
-const IS_SIM = process.env.DEV_SIMULATION === 'true';
+const IS_SIM = runtime.isDev;
 
 let _redis: Redis | null = null;
 function getRedis(): Redis {
@@ -18,7 +19,7 @@ function key(namespace: string, ...parts: string[]): string {
 }
 
 export async function onInventoryUpdate(zip: string, provider: string): Promise<void> {
-  if (IS_SIM) return;
+  if (IS_SIM || !runtime.isRedisEnabled) return;
   try {
     const pattern = key('products', zip, `${provider}:*`);
     await scanAndDelete(pattern);
@@ -28,7 +29,7 @@ export async function onInventoryUpdate(zip: string, provider: string): Promise<
 }
 
 export async function onMemoryUpdate(userId: string): Promise<void> {
-  if (IS_SIM) return;
+  if (IS_SIM || !runtime.isRedisEnabled) return;
   try {
     const intentSetKey = `ag:user_intents:${userId}`;
     const intentIds = await getRedis().smembers(intentSetKey);
@@ -40,7 +41,7 @@ export async function onMemoryUpdate(userId: string): Promise<void> {
 }
 
 export async function trackUserIntent(userId: string, intentId: string): Promise<void> {
-  if (IS_SIM) return;
+  if (IS_SIM || !runtime.isRedisEnabled) return;
   try {
     const intentSetKey = `ag:user_intents:${userId}`;
     await getRedis().sadd(intentSetKey, intentId);
@@ -49,7 +50,7 @@ export async function trackUserIntent(userId: string, intentId: string): Promise
 }
 
 export async function onGeoChange(oldZip: string, newZip: string): Promise<void> {
-  if (IS_SIM) return;
+  if (IS_SIM || !runtime.isRedisEnabled) return;
   try {
     await getRedis().del(key('stores', oldZip));
     await getRedis().del(key('stores', newZip));
@@ -57,7 +58,7 @@ export async function onGeoChange(oldZip: string, newZip: string): Promise<void>
 }
 
 export async function invalidateNamespace(namespace: string, zip: string): Promise<number> {
-  if (IS_SIM) return 0;
+  if (IS_SIM || !runtime.isRedisEnabled) return 0;
   try {
     const pattern = `ag:${namespace}:${zip}:*`;
     return scanAndDelete(pattern);
