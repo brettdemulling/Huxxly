@@ -61,7 +61,7 @@ async function fetchSavingsEvents(sinceMs: number): Promise<number[]> {
   return rows.map((r: EventRow) => {
     const p = r.payload as EventPayload;
     return typeof p.savings === 'number' ? p.savings : 0;
-  }).filter((v) => v > 0);
+  }).filter((v: number) => v > 0);
 }
 
 function average(values: number[]): number {
