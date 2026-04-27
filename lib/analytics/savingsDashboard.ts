@@ -57,7 +57,7 @@ async function fetchSavingsEvents(sinceMs: number): Promise<number[]> {
     orderBy: { timestamp: 'desc' },
     take: 5000,
   });
-  return rows.map((r) => {
+  return rows.map((r: any) => {
     const p = r.payload as Record<string, unknown>;
     return typeof p.savings === 'number' ? p.savings : 0;
   }).filter((v) => v > 0);

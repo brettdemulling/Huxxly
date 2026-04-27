@@ -6,8 +6,8 @@ import type { FlowJobPayload } from '@/lib/queue/upstashQueue';
 
 async function verifyQStashSignature(request: NextRequest, body: string): Promise<boolean> {
   const receiver = new Receiver({
-    currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY!,
-    nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY!,
+    currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY || '',
+    nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY || '',
   });
   const sig = request.headers.get('upstash-signature') ?? '';
   return receiver.verify({ signature: sig, body });

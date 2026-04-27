@@ -9,7 +9,8 @@
     "lint": "eslint",
     "stress": "STRESS_RUN=true STRESS_TIME_SCALE=0.05 node_modules/.bin/jiti tests/load/stressTestRunner.ts",
     "stress:realtime": "STRESS_RUN=true STRESS_TIME_SCALE=1 node_modules/.bin/jiti tests/load/stressTestRunner.ts",
-    "test:final": "DEV_SIMULATION=true node_modules/.bin/jiti tests/final/systemValidation.ts"
+    "test:final": "DEV_SIMULATION=true node_modules/.bin/jiti tests/final/systemValidation.ts",
+    "verify:vercel": "node_modules/.bin/jiti scripts/vercelHealthCheck.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",

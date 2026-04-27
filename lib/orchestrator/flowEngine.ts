@@ -23,7 +23,11 @@ import { buildSavingsData } from '@/lib/analytics/savingsEngine';
 import { markPending } from '@/lib/safety/undoEngine';
 import { detectRepeatPattern } from '@/lib/recommendation/repeatEngine';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const _aiKey = process.env.ANTHROPIC_API_KEY || '';
+if (!_aiKey) {
+  console.warn('[flowEngine] AI disabled: ANTHROPIC_API_KEY not set.');
+}
+const anthropic = new Anthropic({ apiKey: _aiKey });
 
 // ─── Step 1: Parse intent (versioned prompt) ──────────────────────────────────
 

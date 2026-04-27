@@ -2,7 +2,9 @@ import { Client } from '@upstash/qstash';
 import { createJobRecord, emitJobEvent } from './eventQueue';
 
 function getQStashClient() {
-  return new Client({ token: process.env.QSTASH_TOKEN! });
+  const token = process.env.QSTASH_TOKEN || '';
+  if (!token) console.warn('[upstashQueue] QStash disabled: QSTASH_TOKEN not set.');
+  return new Client({ token });
 }
 
 export interface FlowJobPayload {
@@ -30,6 +32,11 @@ export async function dispatchFlowJob(
 
   const payload: FlowJobPayload = { jobId, rawInput, zipCode, userId, flowId };
   const workerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/worker/flow`;
+
+  if (!process.env.QSTASH_TOKEN || !process.env.NEXT_PUBLIC_APP_URL) {
+    console.warn('[upstashQueue] Skipping QStash dispatch: missing QSTASH_TOKEN or NEXT_PUBLIC_APP_URL.');
+    return jobId;
+  }
 
   await getQStashClient().publishJSON({
     url: workerUrl,

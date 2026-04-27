@@ -2,10 +2,12 @@ import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+const _rlUrl   = process.env.UPSTASH_REDIS_REST_URL   || '';
+const _rlToken = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+if (!_rlUrl || !_rlToken) {
+  console.warn('[rateLimit] Rate limiting disabled: UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN not set.');
+}
+const redis = new Redis({ url: _rlUrl, token: _rlToken });
 
 // ─── Cost weights (relative compute/AI cost per call) ────────────────────────
 // Higher weight = stricter limiting. Global token budget = 60/min.
