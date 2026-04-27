@@ -41,13 +41,13 @@ export async function getUserBehavior(userId: string): Promise<UserBehavior> {
   let lastActiveAt: string | null = null;
 
   try {
-    const row = await prisma.checkoutEvent.aggregate({
-      where: { userId },
+    const row = await prisma.event.aggregate({
+      where: { userId, type: 'checkout_triggered' },
       _count: { id: true },
-      _max: { createdAt: true },
+      _max: { timestamp: true },
     });
     checkoutCount = (row._count as { id: number }).id ?? 0;
-    const maxDate = (row._max as { createdAt: Date | null }).createdAt;
+    const maxDate = (row._max as { timestamp: Date | null }).timestamp;
     lastActiveAt = maxDate ? maxDate.toISOString() : null;
   } catch {
     // DB unavailable in sim mode — defaults stand
