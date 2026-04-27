@@ -68,7 +68,7 @@ async function computeLifetimeSavings(userId: string): Promise<number> {
       take: 50,
     });
 
-    return events.reduce((total: number, e) => {
+    return events.reduce((total: number, e: any) => {
       const p = e.payload as EventPayload;
       return total + (typeof p.savingsCents === 'number' ? p.savingsCents : 0);
     }, 0);
