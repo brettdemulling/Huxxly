@@ -85,15 +85,14 @@ async function computeAverageSavingsPct(userId: string, currentPct: number): Pro
       take: 20,
     });
 
-    const pcts = events
-      .map((e: EventRow) => {
-        const p = e.payload as EventPayload;
-        return typeof p.savingsPercent === 'number' ? p.savingsPercent : null;
-      })
-      .filter((v): v is number => v !== null);
+    const mapped: (number | null)[] = events.map((e: EventRow) => {
+      const p = e.payload as EventPayload;
+      return typeof p.savingsPercent === 'number' ? p.savingsPercent : null;
+    });
+    const pcts: number[] = mapped.filter((v): v is number => v !== null);
 
     pcts.push(currentPct);
-    const avg = pcts.reduce((s, v) => s + v, 0) / pcts.length;
+    const avg = pcts.reduce((s: number, v: number) => s + v, 0) / pcts.length;
     return avg.toFixed(1);
   } catch {
     return currentPct.toFixed(1);
