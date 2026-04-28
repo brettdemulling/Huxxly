@@ -345,10 +345,10 @@ export default function Home() {
       {cartOpen && cart && (
         <div
           className="rounded-xl p-4"
-          style={{ background: 'var(--color-success-bg)', border: '1px solid var(--color-border-light)' }}
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-light)' }}
         >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium" style={{ color: 'var(--color-success)' }}>
+            <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               Grocery Cart · {cart.recipeCount} recipes · ${cart.totalCost.toFixed(2)} est.
             </p>
             <button
@@ -376,10 +376,10 @@ export default function Home() {
       {planOpen && plan && (
         <div
           className="rounded-xl p-4"
-          style={{ background: 'var(--color-primary-light)', border: '1px solid var(--color-border-light)' }}
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-light)' }}
         >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium" style={{ color: 'var(--color-primary-pressed)' }}>
+            <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               {plan.name}
             </p>
             <button
@@ -546,10 +546,10 @@ function RecipeCard({
         background: 'var(--color-surface)',
         border: '1px solid var(--color-border-light)',
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.07)')}
+      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.04)')}
       onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
     >
-      <div className="flex gap-3 p-3">
+      <div className="flex gap-3 p-4">
         {/* Image */}
         <div
           className="shrink-0 w-[72px] h-[72px] rounded-lg overflow-hidden"
@@ -590,9 +590,9 @@ function RecipeCard({
               color: 'var(--color-primary-pressed)',
               border: '1px solid var(--color-primary)',
             } : {
-              background: 'transparent',
-              color: 'var(--color-text-muted)',
-              border: '1px solid var(--color-border-light)',
+              background: 'var(--color-primary)',
+              color: '#fff',
+              border: '1px solid var(--color-primary)',
             }}
           >
             {recipe.isSaved ? '✓ Saved' : 'Save'}
@@ -617,7 +617,7 @@ function RecipeCard({
 
       {/* Tags */}
       {recipe.tags.length > 0 && (
-        <div className="px-3 pb-3 flex flex-wrap gap-1">
+        <div className="px-4 pb-4 flex flex-wrap gap-1">
           {recipe.tags.slice(0, 4).map((tag) => (
             <span
               key={tag}
