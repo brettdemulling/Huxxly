@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -47,43 +47,16 @@ const SEARCH_HINTS = [
   'Quick weeknight meals under $30',
 ];
 
-// ─── Query intent parser ──────────────────────────────────────────────────────
+// ─── Backend-provided search meta ────────────────────────────────────────────
 
-interface QueryIntent {
-  servings?: number;
-  budgetTotal?: number;
-}
-
-function parseQuery(q: string): QueryIntent {
-  const s = q.toLowerCase();
-
-  let servings: number | undefined;
-  const servingRx: RegExp[] = [
-    /\bfor\s+(\d+)\s+(?:people|persons?|servings?|adults?|guests?|kids?|of\s+us)\b/,
-    /\b(\d+)\s+(?:people|persons?|servings?|adults?|guests?)\b/,
-    /\bfamily\s+of\s+(\d+)\b/,
-    /\b(\d+)[\s-]?person\b/,
-    /\bserves?\s+(\d+)\b/,
-  ];
-  for (const rx of servingRx) {
-    const m = s.match(rx);
-    if (m?.[1]) { servings = Math.min(Math.max(parseInt(m[1], 10), 1), 20); break; }
-  }
-
-  let budgetTotal: number | undefined;
-  const budgetRx: RegExp[] = [
-    /under\s*\$\s*(\d+(?:\.\d+)?)/,
-    /less\s+than\s*\$\s*(\d+(?:\.\d+)?)/,
-    /\$\s*(\d+(?:\.\d+)?)\s*(?:budget|max|limit|or\s+less|total)?/,
-    /(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)/,
-    /budget\s+(?:of\s+)?\$?\s*(\d+(?:\.\d+)?)/,
-  ];
-  for (const rx of budgetRx) {
-    const m = s.match(rx);
-    if (m?.[1]) { budgetTotal = parseFloat(m[1]); break; }
-  }
-
-  return { servings, budgetTotal };
+interface SearchMeta {
+  servings: number | null;
+  budgetTotal: number | null;
+  estimatedTotal: number;
+  isServingQuery: boolean;
+  isBudgeted: boolean;
+  dietTags: string[];
+  intentFlags: string[];
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -123,8 +96,8 @@ export default function Home() {
     setTimeout(() => setToastMsg(''), 2500);
   }, []);
 
-  // Intent derived from the query string — source of truth for servings/budget
-  const intent = useMemo(() => parseQuery(searchQuery), [searchQuery]);
+  // Meta provided by the backend — single source of truth for intent
+  const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
 
   // ── Recipe search ──────────────────────────────────────────────────────────
 
@@ -132,25 +105,25 @@ export default function Home() {
     setSearchLoading(true);
     try {
       const res = await fetch(`/api/recipes?q=${encodeURIComponent(q)}&limit=20`);
-      if (!res.ok) { setRecipes([]); return; }
-      const data = await res.json() as { recipes: Recipe[] };
-      const results = data.recipes ?? [];
-      const queryIntent = parseQuery(q);
-      const estimatedTotal = results.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0);
-      console.log('[INTENT]', queryIntent);
-      console.log('[SEARCH_META]', { ...queryIntent, estimatedTotal, resultsCount: results.length });
-      setRecipes(results);
+      if (!res.ok) { setRecipes([]); setSearchMeta(null); return; }
+      const data = await res.json() as { recipes: Recipe[]; meta: SearchMeta | null };
+      console.log('[INTENT]', data.meta);
+      console.log('[SEARCH_META]', { ...data.meta, resultsCount: (data.recipes ?? []).length });
+      setRecipes(data.recipes ?? []);
+      setSearchMeta(data.meta ?? null);
     } catch {
       setRecipes([]);
+      setSearchMeta(null);
     } finally {
       setSearchLoading(false);
     }
   }, []);
 
-  // Clear stale results immediately when query changes so old cards don't show during debounce
+  // Clear stale results and meta immediately when query changes so old cards don't show during debounce
   useEffect(() => {
     if (!searchStarted) return;
     setRecipes([]);
+    setSearchMeta(null);
   }, [searchQuery, searchStarted]);
 
   useEffect(() => {
@@ -158,15 +131,6 @@ export default function Home() {
     const t = setTimeout(() => { void fetchRecipes(searchQuery); }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, searchStarted, fetchRecipes]);
-
-  // searchMeta: intent fields come from query parse, estimatedTotal from results
-  const searchMeta = useMemo(() => ({
-    servings: intent.servings,
-    budgetTotal: intent.budgetTotal,
-    estimatedTotal: recipes.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0),
-    isBudgeted: !!intent.budgetTotal,
-    isServingQuery: !!intent.servings,
-  }), [intent, recipes]);
 
   function handleSearchFocus() {
     if (!searchStarted) {
@@ -405,8 +369,8 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Search summary strip — only when results are present ──────────── */}
-      {searchStarted && !searchLoading && recipes.length > 0 && (
+      {/* ── Search summary strip — only when results and meta are present ─── */}
+      {searchStarted && !searchLoading && recipes.length > 0 && searchMeta && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
           <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
             {recipes.length} result{recipes.length !== 1 ? 's' : ''}
@@ -421,9 +385,9 @@ export default function Home() {
               Est. total ${searchMeta.estimatedTotal.toFixed(2)}
             </span>
           )}
-          {searchMeta.isBudgeted && (
+          {searchMeta.isBudgeted && searchMeta.budgetTotal !== null && (
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              · Budget ${searchMeta.budgetTotal!.toFixed(2)}
+              · Budget ${searchMeta.budgetTotal.toFixed(2)}
             </span>
           )}
         </div>

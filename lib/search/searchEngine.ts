@@ -1,6 +1,21 @@
 import { prisma } from '@/lib/db';
 
-// ─── Public result type ───────────────────────────────────────────────────────
+// ─── Public types ─────────────────────────────────────────────────────────────
+
+export interface SearchMeta {
+  servings: number | null;
+  budgetTotal: number | null;
+  estimatedTotal: number;
+  isServingQuery: boolean;
+  isBudgeted: boolean;
+  dietTags: string[];
+  intentFlags: string[];
+}
+
+export interface SearchResponse {
+  results: RecipeSearchResult[];
+  meta: SearchMeta;
+}
 
 export interface RecipeSearchResult {
   id: string;
@@ -209,7 +224,7 @@ function adjustedPrice(recipe: PrismaRecipe, queryServings?: number): number {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export async function searchRecipes(query: string, limit = 20): Promise<RecipeSearchResult[]> {
+export async function searchRecipes(query: string, limit = 20): Promise<SearchResponse> {
   const intent = parseIntent(query.trim());
   const hasQuery = query.trim().length > 0;
 
@@ -260,8 +275,8 @@ export async function searchRecipes(query: string, limit = 20): Promise<RecipeSe
   // ── STEP 5: Sort — score DESC, adjustedPrice ASC as tie-breaker ───────────
   relevant.sort((a, b) => b.score - a.score || a.ap - b.ap);
 
-  // ── STEP 6: Shape and return ──────────────────────────────────────────────
-  return relevant.slice(0, limit).map(({ r, ap, score }): RecipeSearchResult => ({
+  // ── STEP 6: Shape results ─────────────────────────────────────────────────
+  const results = relevant.slice(0, limit).map(({ r, ap, score }): RecipeSearchResult => ({
     id: r.id,
     type: 'meal',
     title: r.name,
@@ -275,4 +290,21 @@ export async function searchRecipes(query: string, limit = 20): Promise<RecipeSe
     category: r.category,
     tags: r.tags,
   }));
+
+  // ── STEP 7: Build meta from authoritative intent ──────────────────────────
+  const estimatedTotal = parseFloat(
+    results.reduce((sum, r) => sum + r.adjustedPrice, 0).toFixed(2),
+  );
+
+  const meta: SearchMeta = {
+    servings: intent.servings ?? null,
+    budgetTotal: intent.budgetTotal ?? null,
+    estimatedTotal,
+    isServingQuery: intent.servings !== undefined,
+    isBudgeted: intent.budgetTotal !== undefined,
+    dietTags: intent.dietTags,
+    intentFlags: intent.intentFlags,
+  };
+
+  return { results, meta };
 }

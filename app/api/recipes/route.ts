@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     const q = request.nextUrl.searchParams.get('q') ?? '';
     const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') ?? '20'), 50);
 
-    const results = await searchRecipes(q, limit);
+    const { results, meta } = await searchRecipes(q, limit);
 
     // Attach saved status if user is authenticated
     const session = await getSession(request);
@@ -21,11 +21,15 @@ export async function GET(request: NextRequest) {
       const savedSet = new Set(saved.map((s) => s.recipeId));
       return NextResponse.json({
         recipes: results.map((r) => ({ ...r, isSaved: savedSet.has(r.id) })),
+        meta,
       });
     }
 
-    return NextResponse.json({ recipes: results.map((r) => ({ ...r, isSaved: false })) });
+    return NextResponse.json({
+      recipes: results.map((r) => ({ ...r, isSaved: false })),
+      meta,
+    });
   } catch {
-    return NextResponse.json({ recipes: [] });
+    return NextResponse.json({ recipes: [], meta: null });
   }
 }
