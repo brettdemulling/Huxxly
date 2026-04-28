@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
 import { Microcopy } from '@/lib/branding/microcopy';
@@ -105,7 +105,11 @@ export default function Home() {
       const res = await fetch(`/api/recipes?q=${encodeURIComponent(q)}&limit=20`);
       if (!res.ok) { setRecipes([]); return; }
       const data = await res.json() as { recipes: Recipe[] };
-      setRecipes(data.recipes ?? []);
+      const results = data.recipes ?? [];
+      const servings = results[0]?.displayServings;
+      const estimatedTotal = results.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0);
+      console.log('[SEARCH_UI]', { resultsCount: results.length, meta: { servings, estimatedTotal } });
+      setRecipes(results);
     } catch {
       setRecipes([]);
     } finally {
@@ -113,11 +117,30 @@ export default function Home() {
     }
   }, []);
 
+  // Clear stale results immediately when query changes so old cards don't persist during debounce
+  useEffect(() => {
+    if (!searchStarted) return;
+    setRecipes([]);
+  }, [searchQuery, searchStarted]);
+
   useEffect(() => {
     if (!searchStarted) return;
     const t = setTimeout(() => { void fetchRecipes(searchQuery); }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, searchStarted, fetchRecipes]);
+
+  const searchMeta = useMemo(() => {
+    const servings = recipes[0]?.displayServings;
+    const estimatedTotal = recipes.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0);
+    const budgetMatch = searchQuery.match(
+      /(?:under|less\s+than)\s*\$?\s*(\d+(?:\.\d+)?)|budget\s+(?:of\s+)?\$?\s*(\d+(?:\.\d+)?)|\$\s*(\d+(?:\.\d+)?)/i
+    );
+    const rawBudget = budgetMatch
+      ? parseFloat(budgetMatch[1] ?? budgetMatch[2] ?? budgetMatch[3])
+      : undefined;
+    const budgetTotal = Number.isFinite(rawBudget!) ? rawBudget : undefined;
+    return { servings, estimatedTotal, budgetTotal };
+  }, [recipes, searchQuery]);
 
   function handleSearchFocus() {
     if (!searchStarted) {
@@ -407,6 +430,30 @@ export default function Home() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* ── Search summary strip ─────────────────────────────────────────── */}
+      {searchStarted && !searchLoading && recipes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            {recipes.length} result{recipes.length !== 1 ? 's' : ''}
+          </span>
+          {searchMeta.servings != null && (
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              · Serves {searchMeta.servings}
+            </span>
+          )}
+          {searchMeta.estimatedTotal > 0 && (
+            <span className="text-xs font-medium" style={{ color: 'var(--color-primary)' }}>
+              Est. total ${searchMeta.estimatedTotal.toFixed(2)}
+            </span>
+          )}
+          {searchMeta.budgetTotal != null && (
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              · Budget ${searchMeta.budgetTotal.toFixed(2)}
+            </span>
+          )}
         </div>
       )}
 
