@@ -1,9 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
-import { Microcopy } from '@/lib/branding/microcopy';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,10 +37,9 @@ interface MealPlan {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 120_000;
 const PLACEHOLDER = (name: string) =>
   `https://placehold.co/400x300/F8FAFC/CBD5E1?text=${encodeURIComponent(name.slice(0, 2))}`;
+
 const SEARCH_HINTS = [
   'Find meals for 5 people under $100',
   'High protein meals under $50',
@@ -50,18 +47,48 @@ const SEARCH_HINTS = [
   'Quick weeknight meals under $30',
 ];
 
+// ─── Query intent parser ──────────────────────────────────────────────────────
+
+interface QueryIntent {
+  servings?: number;
+  budgetTotal?: number;
+}
+
+function parseQuery(q: string): QueryIntent {
+  const s = q.toLowerCase();
+
+  let servings: number | undefined;
+  const servingRx: RegExp[] = [
+    /\bfor\s+(\d+)\s+(?:people|persons?|servings?|adults?|guests?|kids?|of\s+us)\b/,
+    /\b(\d+)\s+(?:people|persons?|servings?|adults?|guests?)\b/,
+    /\bfamily\s+of\s+(\d+)\b/,
+    /\b(\d+)[\s-]?person\b/,
+    /\bserves?\s+(\d+)\b/,
+  ];
+  for (const rx of servingRx) {
+    const m = s.match(rx);
+    if (m?.[1]) { servings = Math.min(Math.max(parseInt(m[1], 10), 1), 20); break; }
+  }
+
+  let budgetTotal: number | undefined;
+  const budgetRx: RegExp[] = [
+    /under\s*\$\s*(\d+(?:\.\d+)?)/,
+    /less\s+than\s*\$\s*(\d+(?:\.\d+)?)/,
+    /\$\s*(\d+(?:\.\d+)?)\s*(?:budget|max|limit|or\s+less|total)?/,
+    /(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)/,
+    /budget\s+(?:of\s+)?\$?\s*(\d+(?:\.\d+)?)/,
+  ];
+  for (const rx of budgetRx) {
+    const m = s.match(rx);
+    if (m?.[1]) { budgetTotal = parseFloat(m[1]); break; }
+  }
+
+  return { servings, budgetTotal };
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const router = useRouter();
-
-  // AI planner state (existing — unchanged)
-  const [input, setInput] = useState('');
-  const [zip, setZip] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [statusText, setStatusText] = useState('');
-  const [error, setError] = useState('');
-
   // Recipe search state
   const [searchQuery, setSearchQuery] = useState('');
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -76,14 +103,13 @@ export default function Home() {
   const [planLoading, setPlanLoading] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
 
-  // Toast
+  // Toast + swap
   const [toastMsg, setToastMsg] = useState('');
   const [swapping, setSwapping] = useState<string | null>(null);
 
   const hintRef = useRef(0);
   const [hint, setHint] = useState(SEARCH_HINTS[0]);
 
-  // Rotate hint placeholder
   useEffect(() => {
     const id = setInterval(() => {
       hintRef.current = (hintRef.current + 1) % SEARCH_HINTS.length;
@@ -97,6 +123,9 @@ export default function Home() {
     setTimeout(() => setToastMsg(''), 2500);
   }, []);
 
+  // Intent derived from the query string — source of truth for servings/budget
+  const intent = useMemo(() => parseQuery(searchQuery), [searchQuery]);
+
   // ── Recipe search ──────────────────────────────────────────────────────────
 
   const fetchRecipes = useCallback(async (q: string) => {
@@ -106,9 +135,10 @@ export default function Home() {
       if (!res.ok) { setRecipes([]); return; }
       const data = await res.json() as { recipes: Recipe[] };
       const results = data.recipes ?? [];
-      const servings = results[0]?.displayServings;
+      const queryIntent = parseQuery(q);
       const estimatedTotal = results.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0);
-      console.log('[SEARCH_UI]', { resultsCount: results.length, meta: { servings, estimatedTotal } });
+      console.log('[INTENT]', queryIntent);
+      console.log('[SEARCH_META]', { ...queryIntent, estimatedTotal, resultsCount: results.length });
       setRecipes(results);
     } catch {
       setRecipes([]);
@@ -117,7 +147,7 @@ export default function Home() {
     }
   }, []);
 
-  // Clear stale results immediately when query changes so old cards don't persist during debounce
+  // Clear stale results immediately when query changes so old cards don't show during debounce
   useEffect(() => {
     if (!searchStarted) return;
     setRecipes([]);
@@ -129,18 +159,14 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [searchQuery, searchStarted, fetchRecipes]);
 
-  const searchMeta = useMemo(() => {
-    const servings = recipes[0]?.displayServings;
-    const estimatedTotal = recipes.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0);
-    const budgetMatch = searchQuery.match(
-      /(?:under|less\s+than)\s*\$?\s*(\d+(?:\.\d+)?)|budget\s+(?:of\s+)?\$?\s*(\d+(?:\.\d+)?)|\$\s*(\d+(?:\.\d+)?)/i
-    );
-    const rawBudget = budgetMatch
-      ? parseFloat(budgetMatch[1] ?? budgetMatch[2] ?? budgetMatch[3])
-      : undefined;
-    const budgetTotal = Number.isFinite(rawBudget!) ? rawBudget : undefined;
-    return { servings, estimatedTotal, budgetTotal };
-  }, [recipes, searchQuery]);
+  // searchMeta: intent fields come from query parse, estimatedTotal from results
+  const searchMeta = useMemo(() => ({
+    servings: intent.servings,
+    budgetTotal: intent.budgetTotal,
+    estimatedTotal: recipes.reduce((sum, r) => sum + (r.adjustedPrice ?? r.price), 0),
+    isBudgeted: !!intent.budgetTotal,
+    isServingQuery: !!intent.servings,
+  }), [intent, recipes]);
 
   function handleSearchFocus() {
     if (!searchStarted) {
@@ -228,55 +254,6 @@ export default function Home() {
     }
   }
 
-  // ── AI planner (original — unchanged) ─────────────────────────────────────
-
-  async function pollJob(jobId: string): Promise<void> {
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      const res = await fetch(`/api/jobs/${jobId}`);
-      if (!res.ok) throw new Error('Failed to check job status');
-      const data = await res.json() as { status: string; result?: unknown; error?: string };
-      if (data.status === 'completed') {
-        sessionStorage.setItem('ag_flow', JSON.stringify(data.result));
-        router.push('/meals');
-        return;
-      }
-      if (data.status === 'failed') throw new Error(data.error ?? 'Planning failed. Please try again.');
-      if (data.status === 'running') setStatusText('Preparing your meals');
-    }
-    throw new Error('Request timed out. Please try again.');
-  }
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError('');
-    setStatusText('');
-    if (!input.trim() || !zip.trim()) { setError('Please describe your needs and enter your ZIP code.'); return; }
-    if (!/^\d{5}$/.test(zip)) { setError('ZIP code must be exactly 5 digits.'); return; }
-    setLoading(true);
-    setStatusText('Preparing your plan');
-    try {
-      const res = await fetch('/api/intent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: input.trim(), zipCode: zip.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json() as { error?: string };
-        throw new Error(data.error ?? 'Something went wrong');
-      }
-      const { jobId } = await res.json() as { jobId: string };
-      setStatusText('Analyzing your request');
-      await pollJob(jobId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed. Try again.');
-    } finally {
-      setLoading(false);
-      setStatusText('');
-    }
-  }
-
   const savedCount = recipes.filter((r) => r.isSaved).length;
 
   return (
@@ -300,14 +277,17 @@ export default function Home() {
           What does your family need this week?
         </h1>
         <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-          Search recipes or describe your needs below.
+          Search recipes, save your favorites, then generate a grocery cart or meal plan.
         </p>
       </div>
 
-      {/* ── Recipe search bar ─────────────────────────────────────────────── */}
+      {/* ── Recipe search bar (single — connected to fetchRecipes) ────────── */}
       <div className="flex flex-col gap-3">
         <div className="relative">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--color-text-muted)' }}>
+          <span
+            className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
             <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <circle cx="11" cy="11" r="8" /><path strokeLinecap="round" d="M21 21l-4.35-4.35" />
             </svg>
@@ -326,7 +306,7 @@ export default function Home() {
           />
         </div>
 
-        {/* Action bar — shown once user has saved recipes */}
+        {/* Action bar — appears once user has saved recipes */}
         {savedCount > 0 && (
           <div
             className="flex items-center justify-between rounded-xl px-4 py-3 gap-3"
@@ -376,11 +356,7 @@ export default function Home() {
             <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               Grocery Cart · {cart.recipeCount} recipes · ${cart.totalCost.toFixed(2)} est.
             </p>
-            <button
-              onClick={() => setCartOpen(false)}
-              className="text-xs"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
+            <button onClick={() => setCartOpen(false)} className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               ✕
             </button>
           </div>
@@ -407,11 +383,7 @@ export default function Home() {
             <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               {plan.name}
             </p>
-            <button
-              onClick={() => setPlanOpen(false)}
-              className="text-xs"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
+            <button onClick={() => setPlanOpen(false)} className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               ✕
             </button>
           </div>
@@ -433,13 +405,13 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Search summary strip ─────────────────────────────────────────── */}
+      {/* ── Search summary strip — only when results are present ──────────── */}
       {searchStarted && !searchLoading && recipes.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
           <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
             {recipes.length} result{recipes.length !== 1 ? 's' : ''}
           </span>
-          {searchMeta.servings != null && (
+          {searchMeta.isServingQuery && (
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               · Serves {searchMeta.servings}
             </span>
@@ -449,9 +421,9 @@ export default function Home() {
               Est. total ${searchMeta.estimatedTotal.toFixed(2)}
             </span>
           )}
-          {searchMeta.budgetTotal != null && (
+          {searchMeta.isBudgeted && (
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              · Budget ${searchMeta.budgetTotal.toFixed(2)}
+              · Budget ${searchMeta.budgetTotal!.toFixed(2)}
             </span>
           )}
         </div>
@@ -489,75 +461,6 @@ export default function Home() {
           )}
         </div>
       )}
-
-      {/* ── Divider ───────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-px" style={{ background: 'var(--color-border-light)' }} />
-        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>or let AI plan for you</span>
-        <div className="flex-1 h-px" style={{ background: 'var(--color-border-light)' }} />
-      </div>
-
-      {/* ── AI planner form (existing — logic unchanged) ──────────────────── */}
-      <div>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder='e.g. "Feed my family of 4 for $120, kid-friendly, no nuts"'
-            rows={3}
-            maxLength={500}
-            className="w-full rounded-xl px-4 py-3 text-sm font-light resize-none outline-none transition-colors duration-150"
-            style={{
-              border: '1.5px solid var(--color-border-light)',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-primary)',
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-            onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-          />
-
-          <input
-            type="text"
-            value={zip}
-            onChange={(e) => setZip(e.target.value.replace(/\D/g, '').slice(0, 5))}
-            placeholder="ZIP code"
-            maxLength={5}
-            className="w-full rounded-xl px-4 py-3 text-sm font-light outline-none transition-colors duration-150"
-            style={{
-              border: '1.5px solid var(--color-border-light)',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-primary)',
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-            onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-          />
-
-          {error && <p className="text-xs" style={{ color: 'var(--color-error)' }}>{error}</p>}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-xl px-6 py-4 text-white font-medium text-sm transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: loading ? 'var(--color-primary)' : 'var(--color-primary)' }}
-            onMouseEnter={(e) => !loading && (e.currentTarget.style.background = 'var(--color-primary-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-primary)')}
-            onMouseDown={(e) => (e.currentTarget.style.background = 'var(--color-primary-pressed)')}
-            onMouseUp={(e) => (e.currentTarget.style.background = 'var(--color-primary-hover)')}
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-4 w-4 opacity-70" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-                <span className="font-light">{statusText || Microcopy.processing}</span>
-              </span>
-            ) : (
-              Microcopy.orderNow
-            )}
-          </button>
-        </form>
-      </div>
 
       <SavingsBanner />
 
