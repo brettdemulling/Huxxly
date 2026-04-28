@@ -11,10 +11,12 @@ interface Recipe {
   id: string;
   title: string;
   price: number;
+  adjustedPrice?: number;
   category: string;
   tags: string[];
   imageUrl?: string;
   servings?: number;
+  displayServings?: number;
   isSaved: boolean;
 }
 
@@ -573,10 +575,17 @@ function RecipeCard({
           </p>
           <p className="text-xs mt-0.5 capitalize" style={{ color: 'var(--color-text-muted)' }}>
             {recipe.category}
-            {recipe.servings ? ` · ${recipe.servings} servings` : ''}
+            {(recipe.displayServings ?? recipe.servings)
+              ? ` · Serves ${recipe.displayServings ?? recipe.servings}`
+              : ''}
           </p>
           <p className="text-sm font-semibold mt-1" style={{ color: 'var(--color-primary)' }}>
-            ${recipe.price.toFixed(2)}
+            ${(recipe.adjustedPrice ?? recipe.price).toFixed(2)}
+            {recipe.adjustedPrice !== undefined && recipe.adjustedPrice !== recipe.price && (
+              <span className="text-xs font-normal ml-1" style={{ color: 'var(--color-text-muted)' }}>
+                adj.
+              </span>
+            )}
           </p>
         </div>
 
