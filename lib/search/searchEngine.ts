@@ -217,32 +217,62 @@ export async function searchRecipes(query: string, limit = 20): Promise<RecipeSe
     orderBy: { createdAt: 'desc' },
   });
 
-  const results = allRecipes
-    .map((r) => {
-      const sc = hasQuery ? scoreRecipe(r, intent) : 1;
-      const ap = adjustedPrice(r, intent.servings);
-      return { r, score: sc, ap };
-    })
-    // When query is present, drop recipes with zero relevance
-    .filter(({ score }) => !hasQuery || score > 0)
-    // Budget filter: per-recipe adjusted price must fit within stated total
-    .filter(({ ap }) => intent.budgetTotal === undefined || ap <= intent.budgetTotal)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ r, score, ap }): RecipeSearchResult => ({
-      id: r.id,
-      type: 'meal',
-      title: r.name,
-      price: r.price,
-      adjustedPrice: ap,
-      description: `${r.category} · ${r.tags.slice(0, 3).join(', ')}`,
-      score,
-      imageUrl: r.imageUrl ?? undefined,
-      servings: r.servings ?? undefined,
-      displayServings: intent.servings,
-      category: r.category,
-      tags: r.tags,
-    }));
+  // ── STEP 1: Pre-compute adjusted price ────────────────────────────────────
+  const withPrice = allRecipes.map((r) => ({
+    r,
+    ap: adjustedPrice(r, intent.servings),
+  }));
 
-  return results;
+  // ── STEP 2: HARD CONSTRAINTS (run before scoring — must all pass) ─────────
+  const candidates = withPrice.filter(({ r, ap }) => {
+    // Budget: adjusted price must not exceed stated budget
+    if (intent.budgetTotal !== undefined && ap > intent.budgetTotal) return false;
+
+    // Dietary: recipe must contain ALL required diet tags
+    if (intent.dietTags.length > 0) {
+      const recipeTags = r.tags.map((t) => t.toLowerCase());
+      const allPresent = intent.dietTags.every((dietTag) => {
+        const slug = dietTag.replace('-', '');
+        return recipeTags.some((t) => t === dietTag || t.replace('-', '') === slug);
+      });
+      if (!allPresent) return false;
+    }
+
+    // Ingredients: recipe must match at least one specified ingredient
+    if (intent.ingredients.length > 0) {
+      const full = `${r.name} ${r.category} ${r.tags.join(' ')}`.toLowerCase();
+      if (!intent.ingredients.some((ing) => full.includes(ing))) return false;
+    }
+
+    return true;
+  });
+
+  // ── STEP 3: SCORE remaining candidates ────────────────────────────────────
+  const scored = candidates.map(({ r, ap }) => ({
+    r,
+    ap,
+    score: hasQuery ? scoreRecipe(r, intent) : 1,
+  }));
+
+  // ── STEP 4: Drop zero-relevance results (only when a query is present) ─────
+  const relevant = scored.filter(({ score }) => !hasQuery || score > 0);
+
+  // ── STEP 5: Sort — score DESC, adjustedPrice ASC as tie-breaker ───────────
+  relevant.sort((a, b) => b.score - a.score || a.ap - b.ap);
+
+  // ── STEP 6: Shape and return ──────────────────────────────────────────────
+  return relevant.slice(0, limit).map(({ r, ap, score }): RecipeSearchResult => ({
+    id: r.id,
+    type: 'meal',
+    title: r.name,
+    price: r.price,
+    adjustedPrice: ap,
+    description: `${r.category} · ${r.tags.slice(0, 3).join(', ')}`,
+    score,
+    imageUrl: r.imageUrl ?? undefined,
+    servings: r.servings ?? undefined,
+    displayServings: intent.servings,
+    category: r.category,
+    tags: r.tags,
+  }));
 }
