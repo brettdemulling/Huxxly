@@ -1,8 +1,41 @@
 @import "tailwindcss";
 
+/* ─── Huxxly Design Tokens ───────────────────────────────────────────────── */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Base surfaces */
+  --color-bg-primary: #FFFFFF;
+  --color-bg-secondary: #F8FAFC;
+  --color-surface: #FFFFFF;
+
+  /* Text */
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #64748B;
+  --color-text-muted: #94A3B8;
+
+  /* Borders */
+  --color-border-light: #E5E7EB;
+  --color-border-strong: #D1D5DB;
+
+  /* Primary — Smart Emerald */
+  --color-primary: #059669;
+  --color-primary-hover: #047857;
+  --color-primary-pressed: #065F46;
+  --color-primary-light: #D1FAE5;
+
+  /* Secondary accent (limited use) */
+  --color-accent: #2563EB;
+  --color-accent-light: #DBEAFE;
+
+  /* Feedback */
+  --color-success: #16A34A;
+  --color-success-bg: #DCFCE7;
+  --color-warning: #F59E0B;
+  --color-warning-bg: #FEF3C7;
+  --color-error: #DC2626;
+  --color-error-bg: #FEE2E2;
 }
 
 @theme inline {
@@ -24,3 +57,67 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ─── Global token-based component utilities ─────────────────────────────── */
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-radius: 0.75rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background 150ms;
+  cursor: pointer;
+  width: 100%;
+  border: none;
+}
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-primary:active { background: var(--color-primary-pressed); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: 0.75rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 400;
+  transition: background 150ms;
+  cursor: pointer;
+  border: 1px solid var(--color-border-light);
+}
+.btn-secondary:hover { background: var(--color-bg-secondary); }
+
+/* AI / smart feature highlight */
+.ai-feature {
+  background: var(--color-primary-light);
+  color: var(--color-primary-pressed);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+/* Recipe cards */
+.recipe-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  transition: box-shadow 150ms;
+}
+.recipe-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+
+.price-text { color: var(--color-primary); }
+
+.search-input {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-light);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  width: 100%;
+  outline: none;
+  transition: border-color 150ms;
+}
+.search-input:focus { border-color: var(--color-primary); }

@@ -158,3 +158,58 @@ model Event {
   @@index([timestamp])
   @@map("events")
 }
+
+model Recipe {
+  id        String   @id @default(cuid())
+  name      String
+  price     Float
+  category  String
+  tags      String[]
+  imageUrl  String?
+  servings  Int?
+  createdAt DateTime @default(now())
+
+  savedBy      SavedRecipe[]
+  mealPlanItems MealPlanItem[]
+
+  @@map("recipes")
+}
+
+model SavedRecipe {
+  id        String   @id @default(cuid())
+  userId    String
+  recipeId  String
+  createdAt DateTime @default(now())
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, recipeId])
+  @@index([userId])
+  @@map("saved_recipes")
+}
+
+model MealPlan {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+
+  items MealPlanItem[]
+
+  @@index([userId])
+  @@map("meal_plans")
+}
+
+model MealPlanItem {
+  id         String   @id @default(cuid())
+  mealPlanId String
+  recipeId   String
+  day        String
+  createdAt  DateTime @default(now())
+
+  mealPlan MealPlan @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  recipe   Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([mealPlanId])
+  @@map("meal_plan_items")
+}
