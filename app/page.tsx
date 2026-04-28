@@ -80,6 +80,9 @@ export default function Home() {
   const [toastMsg, setToastMsg] = useState('');
   const [swapping, setSwapping] = useState<string | null>(null);
 
+  // Meta provided by the backend — single source of truth for intent
+  const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
+
   const hintRef = useRef(0);
   const [hint, setHint] = useState(SEARCH_HINTS[0]);
 
@@ -95,9 +98,6 @@ export default function Home() {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 2500);
   }, []);
-
-  // Meta provided by the backend — single source of truth for intent
-  const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
 
   // ── Recipe search ──────────────────────────────────────────────────────────
 
@@ -218,10 +218,47 @@ export default function Home() {
     }
   }
 
+  // ── Savings intelligence (derived from existing totals — no fake values) ───
+
+  const cartSavings = (() => {
+    if (!cart || cart.totalCost <= 0) return null;
+    // Budget comparison: user stated a budget and the cart came in under it
+    if (searchMeta?.isBudgeted && searchMeta.budgetTotal !== null && searchMeta.budgetTotal > cart.totalCost) {
+      const saved = searchMeta.budgetTotal - cart.totalCost;
+      const pct = ((saved / searchMeta.budgetTotal) * 100).toFixed(0);
+      return { saved, pct, label: 'under your stated budget' };
+    }
+    // Search-average comparison: compare cart cost to avg search result price × recipeCount
+    if (recipes.length > 0 && cart.recipeCount > 0) {
+      const avgSearchPrice = recipes.reduce((s, r) => s + (r.adjustedPrice ?? r.price), 0) / recipes.length;
+      const stdCost = avgSearchPrice * cart.recipeCount;
+      const saved = stdCost - cart.totalCost;
+      if (saved > 0.01) {
+        const pct = ((saved / stdCost) * 100).toFixed(0);
+        return { saved, pct, label: 'vs. average search basket' };
+      }
+    }
+    return null;
+  })();
+
   const savedCount = recipes.filter((r) => r.isSaved).length;
 
   return (
     <div className="flex flex-col gap-8 pb-12">
+      {/* Animations */}
+      <style>{`
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes skeletonPulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.4; }
+        }
+        .slide-in      { animation: slideDown 200ms ease-out forwards; }
+        .skeleton-pulse { animation: skeletonPulse 1.4s ease-in-out infinite; }
+      `}</style>
+
       {/* Toast */}
       {toastMsg && (
         <div
@@ -290,7 +327,7 @@ export default function Home() {
                   opacity: cartLoading ? 0.55 : 1,
                 }}
               >
-                {cartLoading ? 'Building…' : 'Grocery Cart'}
+                {cartLoading ? 'Building…' : 'Generate Instant Cart'}
               </button>
               <button
                 onClick={generatePlan}
@@ -303,7 +340,7 @@ export default function Home() {
                   opacity: planLoading ? 0.55 : 1,
                 }}
               >
-                {planLoading ? 'Planning…' : 'Meal Plan'}
+                {planLoading ? 'Planning…' : 'Auto-Generate Plan'}
               </button>
             </div>
           </div>
@@ -313,12 +350,13 @@ export default function Home() {
       {/* ── Cart result panel ─────────────────────────────────────────────── */}
       {cartOpen && cart && (
         <div
-          className="rounded-xl p-4"
+          key={cart.totalCost}
+          className="slide-in rounded-xl p-4"
           style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-light)' }}
         >
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-              Grocery Cart · {cart.recipeCount} recipes · ${cart.totalCost.toFixed(2)} est.
+              Grocery Cart · {cart.recipeCount} recipe{cart.recipeCount !== 1 ? 's' : ''} · ${cart.totalCost.toFixed(2)} est.
             </p>
             <button onClick={() => setCartOpen(false)} className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               ✕
@@ -334,13 +372,29 @@ export default function Home() {
               </li>
             ))}
           </ul>
+
+          {/* Savings intelligence — only rendered when real savings data exists */}
+          {cartSavings && (
+            <div
+              className="mt-3 pt-3"
+              style={{ borderTop: '1px solid var(--color-border-light)' }}
+            >
+              <p className="text-xs font-medium" style={{ color: 'var(--color-primary)' }}>
+                You saved ${cartSavings.saved.toFixed(2)} {cartSavings.label}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                This cart is {cartSavings.pct}% more affordable than standard
+              </p>
+            </div>
+          )}
         </div>
       )}
 
       {/* ── Meal plan result panel ────────────────────────────────────────── */}
       {planOpen && plan && (
         <div
-          className="rounded-xl p-4"
+          key={plan.id}
+          className="slide-in rounded-xl p-4"
           style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-light)' }}
         >
           <div className="flex items-center justify-between mb-3">
@@ -351,44 +405,78 @@ export default function Home() {
               ✕
             </button>
           </div>
-          <ul className="flex flex-col gap-1.5">
+          <ul className="flex flex-col gap-2">
             {plan.items.map((item) => (
-              <li key={item.day} className="flex items-baseline gap-2 text-xs">
-                <span className="font-medium w-24 shrink-0" style={{ color: 'var(--color-text-primary)' }}>
+              <li
+                key={item.day}
+                className="flex items-center gap-2 text-xs rounded-lg px-2 py-1.5"
+                style={{ background: 'var(--color-bg-secondary)' }}
+              >
+                <span
+                  className="font-medium shrink-0"
+                  style={{ color: 'var(--color-text-primary)', minWidth: '80px' }}
+                >
                   {item.day}
                 </span>
                 <span className="flex-1 truncate" style={{ color: 'var(--color-text-secondary)' }}>
                   {item.recipe.name}
                 </span>
-                <span className="font-medium" style={{ color: 'var(--color-primary)' }}>
+                <span className="font-medium shrink-0" style={{ color: 'var(--color-primary)' }}>
                   ${item.recipe.price.toFixed(2)}
                 </span>
               </li>
             ))}
           </ul>
+
+          {/* Auto-Generate Weekly Plan — re-runs generatePlan() inline */}
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--color-border-light)' }}>
+            <button
+              onClick={generatePlan}
+              disabled={planLoading}
+              className="w-full text-xs font-medium py-2 rounded-lg transition-colors duration-150"
+              style={{
+                background: 'var(--color-primary-light)',
+                color: 'var(--color-primary-pressed)',
+                opacity: planLoading ? 0.55 : 1,
+              }}
+            >
+              {planLoading ? 'Generating…' : 'Auto-Generate Weekly Plan'}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* ── Search summary strip — only when results and meta are present ─── */}
-      {searchStarted && !searchLoading && recipes.length > 0 && searchMeta && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            {recipes.length} result{recipes.length !== 1 ? 's' : ''}
-          </span>
-          {searchMeta.isServingQuery && (
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              · Serves {searchMeta.servings}
+      {/* ── Search summary strip — always rendered once searchStarted ─────── */}
+      {searchStarted && (
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1"
+          style={{ minHeight: '20px' }}
+        >
+          {(searchLoading || !searchMeta) ? (
+            <span className="text-xs skeleton-pulse" style={{ color: 'var(--color-text-muted)' }}>
+              — servings &nbsp;·&nbsp; calculating budget… &nbsp;·&nbsp; estimating total…
             </span>
-          )}
-          {searchMeta.estimatedTotal > 0 && (
-            <span className="text-xs font-medium" style={{ color: 'var(--color-primary)' }}>
-              Est. total ${searchMeta.estimatedTotal.toFixed(2)}
-            </span>
-          )}
-          {searchMeta.isBudgeted && searchMeta.budgetTotal !== null && (
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              · Budget ${searchMeta.budgetTotal.toFixed(2)}
-            </span>
+          ) : (
+            <>
+              <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                {recipes.length} result{recipes.length !== 1 ? 's' : ''}
+              </span>
+              {searchMeta.isServingQuery && (
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  · Serves {searchMeta.servings}
+                </span>
+              )}
+              {searchMeta.estimatedTotal > 0 && (
+                <span className="text-xs font-medium" style={{ color: 'var(--color-primary)' }}>
+                  Est. total ${searchMeta.estimatedTotal.toFixed(2)}
+                </span>
+              )}
+              {searchMeta.isBudgeted && searchMeta.budgetTotal !== null && (
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  · Budget ${searchMeta.budgetTotal.toFixed(2)}
+                </span>
+              )}
+            </>
           )}
         </div>
       )}
