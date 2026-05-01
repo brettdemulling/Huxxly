@@ -84,7 +84,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [searchStarted, setSearchStarted] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
 
   // Cart + meal plan state
   const [cart, setCart] = useState<CartData | null>(null);
@@ -144,25 +144,41 @@ export default function Home() {
     }
   }, []);
 
+  // Restore persisted store state from sessionStorage on mount
+  useEffect(() => {
+    try {
+      const zip = sessionStorage.getItem('cartZip') ?? '';
+      const storeId = sessionStorage.getItem('selectedStoreId') ?? '';
+      const stores = sessionStorage.getItem('availableStores');
+      if (zip) { setCartZip(zip); setCartZipInput(zip); }
+      if (storeId) setSelectedStoreId(storeId);
+      if (stores) setAvailableStores(JSON.parse(stores) as StoreOption[]);
+    } catch { /* sessionStorage unavailable — silently skip */ }
+  }, []);
+
+  // Persist store state to sessionStorage whenever it changes
+  useEffect(() => {
+    try { sessionStorage.setItem('cartZip', cartZip); } catch { /* ignore */ }
+  }, [cartZip]);
+  useEffect(() => {
+    try { sessionStorage.setItem('selectedStoreId', selectedStoreId); } catch { /* ignore */ }
+  }, [selectedStoreId]);
+  useEffect(() => {
+    try { sessionStorage.setItem('availableStores', JSON.stringify(availableStores)); } catch { /* ignore */ }
+  }, [availableStores]);
+
   // Clear stale results and meta immediately when query changes so old cards don't show during debounce
   useEffect(() => {
-    if (!searchStarted) return;
+    if (!hasInteracted) return;
     setRecipes([]);
     setSearchMeta(null);
-  }, [searchQuery, searchStarted]);
+  }, [searchQuery, hasInteracted]);
 
   useEffect(() => {
-    if (!searchStarted) return;
+    if (!hasInteracted) return;
     const t = setTimeout(() => { void fetchRecipes(searchQuery); }, 300);
     return () => clearTimeout(t);
-  }, [searchQuery, searchStarted, fetchRecipes]);
-
-  function handleSearchFocus() {
-    if (!searchStarted) {
-      setSearchStarted(true);
-      void fetchRecipes('');
-    }
-  }
+  }, [searchQuery, hasInteracted, fetchRecipes]);
 
   // ── Save / Swap ────────────────────────────────────────────────────────────
 
@@ -360,7 +376,12 @@ export default function Home() {
             placeholder={hint}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onFocus={handleSearchFocus}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (!hasInteracted) setHasInteracted(true);
+                void fetchRecipes(searchQuery);
+              }
+            }}
           />
         </div>
 
@@ -600,8 +621,8 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Search summary strip — always rendered once searchStarted ─────── */}
-      {searchStarted && (
+      {/* ── Search summary strip — rendered after first search interaction ── */}
+      {hasInteracted && (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1"
           style={{ minHeight: '20px' }}
@@ -636,7 +657,7 @@ export default function Home() {
       )}
 
       {/* ── Recipe results ────────────────────────────────────────────────── */}
-      {searchStarted && (
+      {hasInteracted && (
         <div className="flex flex-col gap-3">
           {searchLoading ? (
             <div className="flex items-center justify-center py-8">
@@ -648,10 +669,7 @@ export default function Home() {
           ) : recipes.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                No results — try{' '}
-                <span style={{ color: 'var(--color-text-secondary)' }}>
-                  &ldquo;family dinner under $80&rdquo;
-                </span>
+                No matching results found
               </p>
             </div>
           ) : (
