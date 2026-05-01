@@ -296,13 +296,11 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
 
   // ── STEP 7: AI supplement — fires when DB results are sparse ──────────────
   let finalResults: RecipeSearchResult[] = dbResults;
-  let aiCount = 0;
+  let aiResults: RecipeSearchResult[] = [];
 
   if (hasQuery && dbResults.length < SUPPLEMENT_THRESHOLD) {
     const needed = Math.max(6, SUPPLEMENT_THRESHOLD * 2 - dbResults.length);
-    const aiResults = await generateRecipesFromIntent(query, intent, needed);
-
-    aiCount = aiResults.length;
+    aiResults = await generateRecipesFromIntent(query, intent, needed);
 
     if (aiResults.length > 0) {
       // Deduplicate: skip AI recipes whose names already appear in DB results
@@ -324,14 +322,15 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     }
   }
 
-  // ── Fallback guarantee — never return empty when data exists ──────────────
-  if (finalResults.length === 0 && dbResults.length > 0) {
-    finalResults = dbResults.slice(0, 5);
+  // ── Final guarantee — never return empty when any data source has results ──
+  if (finalResults.length === 0) {
+    finalResults = aiResults.length > 0 ? aiResults.slice(0, 5) : dbResults.slice(0, 5);
   }
 
-  console.log('[SEARCH_DEBUG]', {
+  console.log('[SEARCH_PIPELINE]', {
+    query,
     dbCount: dbResults.length,
-    aiCount,
+    aiCount: aiResults.length,
     finalCount: finalResults.length,
   });
 
