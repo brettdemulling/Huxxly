@@ -22,6 +22,24 @@ interface CartData {
   items: { name: string; estimatedCost: number }[];
   totalCost: number;
   recipeCount: number;
+  // Multi-store fields (present when zipCode + storeId params are sent)
+  storeId?: string;
+  storeName?: string;
+  stores?: {
+    storeId: string;
+    storeName: string;
+    priceMultiplier: number;
+    items: { name: string; adjustedCost: number }[];
+    totalCost: number;
+  }[];
+}
+
+interface StoreOption {
+  id: string;
+  name: string;
+  type: string;
+  address: string;
+  priceMultiplier: number;
 }
 
 interface MealPlanDay {
@@ -72,6 +90,13 @@ export default function Home() {
   const [cart, setCart] = useState<CartData | null>(null);
   const [cartLoading, setCartLoading] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+
+  // Multi-store state
+  const [cartZipInput, setCartZipInput] = useState('');
+  const [cartZip, setCartZip] = useState('');
+  const [availableStores, setAvailableStores] = useState<StoreOption[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [storesLoading, setStoresLoading] = useState(false);
   const [plan, setPlan] = useState<MealPlan | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -178,12 +203,19 @@ export default function Home() {
 
   // ── Cart ───────────────────────────────────────────────────────────────────
 
-  async function generateCart() {
+  // preserveOpen: true when switching stores (avoids panel flash during re-fetch)
+  async function generateCart(opts?: { zipCode?: string; storeId?: string; preserveOpen?: boolean }) {
     setCartLoading(true);
-    setCart(null);
-    setPlan(null);
+    if (!opts?.preserveOpen) {
+      setCart(null);
+      setPlan(null);
+    }
     try {
-      const res = await fetch('/api/recipes/cart');
+      const params = new URLSearchParams();
+      if (opts?.zipCode) params.set('zipCode', opts.zipCode);
+      if (opts?.storeId) params.set('storeId', opts.storeId);
+      const qs = params.toString();
+      const res = await fetch(`/api/recipes/cart${qs ? '?' + qs : ''}`);
       if (res.status === 401) { toast('Sign in to generate a cart.'); return; }
       const data = await res.json() as CartData;
       if (!data.items?.length) { toast('Save recipes first.'); return; }
@@ -193,6 +225,31 @@ export default function Home() {
     } finally {
       setCartLoading(false);
     }
+  }
+
+  async function fetchStoresForZip(zip: string) {
+    if (!/^\d{5}$/.test(zip)) { toast('Enter a valid 5-digit ZIP.'); return; }
+    setStoresLoading(true);
+    try {
+      const res = await fetch(`/api/stores?zip=${zip}`);
+      if (!res.ok) return;
+      const data = await res.json() as { stores: StoreOption[] };
+      setAvailableStores(data.stores);
+      setCartZip(zip);
+      if (data.stores.length > 0) {
+        const first = data.stores[0].id;
+        setSelectedStoreId(first);
+        // Re-fetch cart with the first store applied
+        void generateCart({ zipCode: zip, storeId: first, preserveOpen: true });
+      }
+    } finally {
+      setStoresLoading(false);
+    }
+  }
+
+  function handleStoreChange(storeId: string) {
+    setSelectedStoreId(storeId);
+    void generateCart({ zipCode: cartZip, storeId, preserveOpen: true });
   }
 
   // ── Meal plan ──────────────────────────────────────────────────────────────
@@ -350,18 +407,118 @@ export default function Home() {
       {/* ── Cart result panel ─────────────────────────────────────────────── */}
       {cartOpen && cart && (
         <div
-          key={cart.totalCost}
+          key={`${cart.storeId ?? 'default'}-${cart.totalCost}`}
           className="slide-in rounded-xl p-4"
           style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-light)' }}
         >
+          {/* Header */}
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-              Grocery Cart · {cart.recipeCount} recipe{cart.recipeCount !== 1 ? 's' : ''} · ${cart.totalCost.toFixed(2)} est.
-            </p>
-            <button onClick={() => setCartOpen(false)} className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                Grocery Cart
+              </p>
+              {cart.storeName && (
+                <span
+                  className="text-xs px-2 py-0.5 rounded-full font-medium"
+                  style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary-pressed)' }}
+                >
+                  {cart.storeName}
+                </span>
+              )}
+              <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                {cart.recipeCount} recipe{cart.recipeCount !== 1 ? 's' : ''} · ${cart.totalCost.toFixed(2)} est.
+              </span>
+            </div>
+            <button onClick={() => setCartOpen(false)} className="text-xs shrink-0" style={{ color: 'var(--color-text-muted)' }}>
               ✕
             </button>
           </div>
+
+          {/* ── Store switcher ─────────────────────────────────────────────── */}
+          <div
+            className="rounded-lg p-3 mb-3 flex flex-col gap-2"
+            style={{ background: 'var(--color-bg-secondary)' }}
+          >
+            <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+              Compare prices at nearby stores
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="ZIP code"
+                value={cartZipInput}
+                maxLength={5}
+                onChange={(e) => setCartZipInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                onKeyDown={(e) => e.key === 'Enter' && void fetchStoresForZip(cartZipInput)}
+                className="flex-1 text-xs rounded-lg px-3 py-1.5 outline-none transition-colors duration-150"
+                style={{
+                  border: '1px solid var(--color-border-light)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-primary)',
+                }}
+              />
+              <button
+                onClick={() => void fetchStoresForZip(cartZipInput)}
+                disabled={storesLoading || cartZipInput.length !== 5}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors duration-150"
+                style={{
+                  background: 'var(--color-primary)',
+                  color: '#fff',
+                  opacity: storesLoading || cartZipInput.length !== 5 ? 0.5 : 1,
+                }}
+              >
+                {storesLoading ? '…' : 'Find'}
+              </button>
+            </div>
+
+            {/* Store dropdown */}
+            {availableStores.length > 0 && (
+              <select
+                value={selectedStoreId}
+                onChange={(e) => handleStoreChange(e.target.value)}
+                disabled={cartLoading}
+                className="w-full text-xs rounded-lg px-3 py-1.5 outline-none transition-colors duration-150"
+                style={{
+                  border: '1px solid var(--color-border-light)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-primary)',
+                  opacity: cartLoading ? 0.6 : 1,
+                }}
+              >
+                {availableStores.map((store) => (
+                  <option key={store.id} value={store.id}>
+                    {store.name} {store.priceMultiplier > 1 ? `(+${Math.round((store.priceMultiplier - 1) * 100)}%)` : '(baseline)'}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Store price comparison strip */}
+            {cart.stores && cart.stores.length > 1 && (
+              <div className="flex flex-col gap-1 mt-1">
+                {cart.stores.map((s) => (
+                  <div
+                    key={s.storeId}
+                    className="flex justify-between items-center text-xs px-2 py-1 rounded-md transition-colors duration-150"
+                    style={{
+                      background: s.storeId === (cart.storeId ?? selectedStoreId)
+                        ? 'var(--color-primary-light)'
+                        : 'transparent',
+                      color: s.storeId === (cart.storeId ?? selectedStoreId)
+                        ? 'var(--color-primary-pressed)'
+                        : 'var(--color-text-muted)',
+                    }}
+                  >
+                    <span>{s.storeName}</span>
+                    <span className="font-medium">${s.totalCost.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Cart items */}
           <ul className="flex flex-col gap-1.5">
             {cart.items.map((item, i) => (
               <li key={i} className="flex justify-between text-xs" style={{ color: 'var(--color-text-secondary)' }}>
@@ -375,10 +532,7 @@ export default function Home() {
 
           {/* Savings intelligence — only rendered when real savings data exists */}
           {cartSavings && (
-            <div
-              className="mt-3 pt-3"
-              style={{ borderTop: '1px solid var(--color-border-light)' }}
-            >
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--color-border-light)' }}>
               <p className="text-xs font-medium" style={{ color: 'var(--color-primary)' }}>
                 You saved ${cartSavings.saved.toFixed(2)} {cartSavings.label}
               </p>

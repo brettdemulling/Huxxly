@@ -213,3 +213,27 @@ model MealPlanItem {
   @@index([mealPlanId])
   @@map("meal_plan_items")
 }
+
+model GroceryStore {
+  id              String  @id @default(cuid())
+  name            String
+  zipCode         String
+  address         String?
+  type            String  // walmart | kroger | target | local
+  priceMultiplier Float   @default(1.0)
+
+  @@index([zipCode])
+  @@map("grocery_stores")
+}
+
+model UserStoreSelection {
+  id        String   @id @default(cuid())
+  userId    String
+  storeId   String
+  zipCode   String
+  createdAt DateTime @default(now())
+
+  @@unique([userId])
+  @@index([userId])
+  @@map("user_store_selections")
+}
