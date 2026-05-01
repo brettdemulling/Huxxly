@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
+import { type SearchState } from '@/lib/state/searchStateMachine';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,6 +76,10 @@ interface SearchMeta {
   isBudgeted: boolean;
   dietTags: string[];
   intentFlags: string[];
+  dbCount?: number;
+  aiCount?: number;
+  fallbackUsed?: boolean;
+  totalCount?: number;
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -83,7 +88,7 @@ export default function Home() {
   // Recipe search state
   const [searchQuery, setSearchQuery] = useState('');
   const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchState, setSearchState] = useState<SearchState>('IDLE');
   const [hasInteracted, setHasInteracted] = useState(false);
 
   // Cart + meal plan state
@@ -127,20 +132,21 @@ export default function Home() {
   // ── Recipe search ──────────────────────────────────────────────────────────
 
   const fetchRecipes = useCallback(async (q: string) => {
-    setSearchLoading(true);
+    setSearchState('LOADING');
     try {
       const res = await fetch(`/api/recipes?q=${encodeURIComponent(q)}&limit=20`);
-      if (!res.ok) { setRecipes([]); setSearchMeta(null); return; }
+      if (!res.ok) { setRecipes([]); setSearchMeta(null); setSearchState('ERROR'); return; }
       const data = await res.json() as { recipes: Recipe[]; meta: SearchMeta | null };
       console.log('[INTENT]', data.meta);
       console.log('[SEARCH_META]', { ...data.meta, resultsCount: (data.recipes ?? []).length });
-      setRecipes(data.recipes ?? []);
+      const fetched = data.recipes ?? [];
+      setRecipes(fetched);
       setSearchMeta(data.meta ?? null);
+      setSearchState(fetched.length > 0 ? 'SUCCESS' : 'EMPTY');
     } catch {
       setRecipes([]);
       setSearchMeta(null);
-    } finally {
-      setSearchLoading(false);
+      setSearchState('ERROR');
     }
   }, []);
 
@@ -167,11 +173,12 @@ export default function Home() {
     try { sessionStorage.setItem('availableStores', JSON.stringify(availableStores)); } catch { /* ignore */ }
   }, [availableStores]);
 
-  // Clear stale results and meta immediately when query changes so old cards don't show during debounce
+  // Clear stale results and transition to LOADING immediately when query changes
   useEffect(() => {
     if (!hasInteracted) return;
     setRecipes([]);
     setSearchMeta(null);
+    setSearchState('LOADING');
   }, [searchQuery, hasInteracted]);
 
   useEffect(() => {
@@ -627,7 +634,7 @@ export default function Home() {
           className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1"
           style={{ minHeight: '20px' }}
         >
-          {searchLoading ? (
+          {searchState === 'LOADING' ? (
             <span className="text-xs skeleton-pulse" style={{ color: 'var(--color-text-muted)' }}>
               Searching…
             </span>
@@ -659,17 +666,23 @@ export default function Home() {
       {/* ── Recipe results ────────────────────────────────────────────────── */}
       {hasInteracted && (
         <div className="flex flex-col gap-3">
-          {searchLoading ? (
+          {searchState === 'LOADING' ? (
             <div className="flex items-center justify-center py-8">
               <svg className="animate-spin h-5 w-5" style={{ color: 'var(--color-text-muted)' }} fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
             </div>
-          ) : recipes.length === 0 ? (
+          ) : searchState === 'EMPTY' ? (
             <div className="text-center py-10">
               <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
                 No matching results found
+              </p>
+            </div>
+          ) : searchState === 'ERROR' ? (
+            <div className="text-center py-10">
+              <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                Search unavailable — please try again
               </p>
             </div>
           ) : (

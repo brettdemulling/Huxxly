@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchRecipes } from '@/lib/search/searchEngine';
+import { search } from '@/lib/orchestration/commerceOrchestrator';
 import { getSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db';
 import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     const q = request.nextUrl.searchParams.get('q') ?? '';
     const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') ?? '20'), 50);
 
-    const { results, meta } = await searchRecipes(q, limit);
+    const { results, meta } = await search(q, limit);
 
     // Attach saved status if user is authenticated
     const session = await getSession(request);

@@ -14,6 +14,10 @@ export interface SearchMeta {
   isBudgeted: boolean;
   dietTags: string[];
   intentFlags: string[];
+  dbCount: number;
+  aiCount: number;
+  fallbackUsed: boolean;
+  totalCount: number;
 }
 
 export interface SearchResponse {
@@ -355,6 +359,10 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     isBudgeted: intent.budgetTotal !== undefined,
     dietTags: intent.dietTags,
     intentFlags: intent.intentFlags,
+    dbCount: dbResults.length,
+    aiCount: aiResults.length,
+    fallbackUsed,
+    totalCount: finalResults.length,
   };
 
   return { results: finalResults, meta };
