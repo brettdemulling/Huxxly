@@ -296,27 +296,44 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
 
   // ── STEP 7: AI supplement — fires when DB results are sparse ──────────────
   let finalResults: RecipeSearchResult[] = dbResults;
+  let aiCount = 0;
 
   if (hasQuery && dbResults.length < SUPPLEMENT_THRESHOLD) {
     const needed = Math.max(6, SUPPLEMENT_THRESHOLD * 2 - dbResults.length);
     const aiResults = await generateRecipesFromIntent(query, intent, needed);
 
+    aiCount = aiResults.length;
+
     if (aiResults.length > 0) {
       // Deduplicate: skip AI recipes whose names already appear in DB results
       const existingNames = new Set(dbResults.map((r) => r.title.toLowerCase()));
-      let fresh = aiResults.filter((r) => !existingNames.has(r.title.toLowerCase()));
+      const fresh = aiResults
+        .filter((r) => !existingNames.has(r.title.toLowerCase()))
+        .map((r) => {
+          // Soft budget penalty for AI results — penalise score instead of hard exclude
+          if (intent.budgetTotal !== undefined && r.adjustedPrice > intent.budgetTotal) {
+            return { ...r, score: Math.max(0, r.score - 4) };
+          }
+          return r;
+        });
 
-      // Apply same budget hard constraint to AI results
-      if (intent.budgetTotal !== undefined) {
-        fresh = fresh.filter((r) => r.adjustedPrice <= intent.budgetTotal!);
-      }
-
-      // Merge and re-sort: score DESC, adjustedPrice ASC
+      // Merge DB (trusted baseline) + AI (gap filler), sort once
       const merged = ([...dbResults, ...fresh] as RecipeSearchResult[]);
       merged.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
       finalResults = merged.slice(0, limit);
     }
   }
+
+  // ── Fallback guarantee — never return empty when data exists ──────────────
+  if (finalResults.length === 0 && dbResults.length > 0) {
+    finalResults = dbResults.slice(0, 5);
+  }
+
+  console.log('[SEARCH_DEBUG]', {
+    dbCount: dbResults.length,
+    aiCount,
+    finalCount: finalResults.length,
+  });
 
   // ── STEP 8: Build meta from authoritative intent + final result set ────────
   const estimatedTotal = parseFloat(
