@@ -2,23 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
+import { RecipeCard, type Recipe } from '@/components/recipes/RecipeCard';
+import { DietaryFilterBar } from '@/components/recipes/DietaryFilterBar';
 import { type SearchState } from '@/lib/state/searchStateMachine';
 import { type CartState, cartTransition } from '@/lib/state/cartStateMachine';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Recipe {
-  id: string;
-  title: string;
-  price: number;
-  adjustedPrice?: number;
-  category: string;
-  tags: string[];
-  imageUrl?: string;
-  servings?: number;
-  displayServings?: number;
-  isSaved: boolean;
-}
+import { type DietaryTag, buildDietaryQuery } from '@/lib/domains/dietary';
+import { SERVING_OPTIONS, type ServingCount } from '@/lib/domains/servings';
 
 interface CartData {
   items: { name: string; estimatedCost: number }[];
@@ -57,9 +46,6 @@ interface MealPlan {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PLACEHOLDER = (name: string) =>
-  `https://placehold.co/400x300/F8FAFC/CBD5E1?text=${encodeURIComponent(name.slice(0, 2))}`;
-
 const SEARCH_HINTS = [
   'Find meals for 5 people under $100',
   'High protein meals under $50',
@@ -91,6 +77,8 @@ export default function Home() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [searchState, setSearchState] = useState<SearchState>('IDLE');
   const [hasInteracted, setHasInteracted] = useState(false);
+  const [selectedDiets, setSelectedDiets] = useState<DietaryTag[]>([]);
+  const [globalServings, setGlobalServings] = useState<ServingCount | null>(null);
 
   // Cart + meal plan state
   const [cart, setCart] = useState<CartData | null>(null);
@@ -132,10 +120,11 @@ export default function Home() {
 
   // ── Recipe search ──────────────────────────────────────────────────────────
 
-  const fetchRecipes = useCallback(async (q: string) => {
+  const fetchRecipes = useCallback(async (q: string, diets?: DietaryTag[]) => {
     setSearchState('LOADING');
+    const effectiveQuery = buildDietaryQuery(q, diets ?? selectedDiets);
     try {
-      const res = await fetch(`/api/recipes?q=${encodeURIComponent(q)}&limit=20`);
+      const res = await fetch(`/api/recipes?q=${encodeURIComponent(effectiveQuery)}&limit=20`);
       if (!res.ok) { setRecipes([]); setSearchMeta(null); setSearchState('ERROR'); return; }
       const data = await res.json() as { recipes: Recipe[]; meta: SearchMeta | null };
       console.log('[INTENT]', data.meta);
@@ -149,7 +138,8 @@ export default function Home() {
       setSearchMeta(null);
       setSearchState('ERROR');
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDiets]);
 
   // Restore persisted store state from sessionStorage on mount
   useEffect(() => {
@@ -174,19 +164,31 @@ export default function Home() {
     try { sessionStorage.setItem('availableStores', JSON.stringify(availableStores)); } catch { /* ignore */ }
   }, [availableStores]);
 
-  // Clear stale results and transition to LOADING immediately when query changes
+  // Clear stale results and transition to LOADING immediately when query or diets change
   useEffect(() => {
     if (!hasInteracted) return;
     setRecipes([]);
     setSearchMeta(null);
     setSearchState('LOADING');
-  }, [searchQuery, hasInteracted]);
+  }, [searchQuery, selectedDiets, hasInteracted]);
 
   useEffect(() => {
     if (!hasInteracted) return;
     const t = setTimeout(() => { void fetchRecipes(searchQuery); }, 300);
     return () => clearTimeout(t);
-  }, [searchQuery, hasInteracted, fetchRecipes]);
+  }, [searchQuery, selectedDiets, hasInteracted, fetchRecipes]);
+
+  // ── Dietary + servings ─────────────────────────────────────────────────────
+
+  function toggleDiet(tag: DietaryTag) {
+    setSelectedDiets((prev) =>
+      prev.includes(tag) ? prev.filter((d) => d !== tag) : [...prev, tag],
+    );
+  }
+
+  function handleServingsChange(s: ServingCount) {
+    setGlobalServings((prev) => (prev === s ? null : s));
+  }
 
   // ── Save / Swap ────────────────────────────────────────────────────────────
 
@@ -627,6 +629,34 @@ export default function Home() {
         </div>
       )}
 
+      {/* ── Dietary filter bar — always visible once user has interacted ─── */}
+      <DietaryFilterBar selected={selectedDiets} onToggle={toggleDiet} />
+
+      {/* ── Serving size selector ─────────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs shrink-0" style={{ color: 'var(--color-text-muted)' }}>Serves</span>
+        <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          {SERVING_OPTIONS.map((s) => (
+            <button
+              key={s}
+              onClick={() => handleServingsChange(s)}
+              className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full transition-all duration-150"
+              style={globalServings === s ? {
+                background: 'var(--color-primary)',
+                color: '#fff',
+                border: '1px solid var(--color-primary)',
+              } : {
+                background: 'var(--color-bg-secondary)',
+                color: 'var(--color-text-secondary)',
+                border: '1px solid var(--color-border-light)',
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* ── Search summary strip — rendered after first search interaction ── */}
       {hasInteracted && (
         <div
@@ -707,123 +737,3 @@ export default function Home() {
   );
 }
 
-// ─── Recipe Card ──────────────────────────────────────────────────────────────
-
-function RecipeCard({
-  recipe,
-  swapping,
-  onSave,
-  onSwap,
-}: {
-  recipe: Recipe;
-  swapping: boolean;
-  onSave: () => void;
-  onSwap: () => void;
-}) {
-  const placeholder = PLACEHOLDER(recipe.title);
-  const [imgSrc, setImgSrc] = useState(recipe.imageUrl ?? placeholder);
-
-  useEffect(() => {
-    setImgSrc(recipe.imageUrl ?? placeholder);
-  }, [recipe.imageUrl, placeholder]);
-
-  return (
-    <div
-      className="rounded-xl overflow-hidden transition-shadow duration-150"
-      style={{
-        background: 'var(--color-surface)',
-        border: '1px solid var(--color-border-light)',
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.04)')}
-      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
-    >
-      <div className="flex gap-3 p-4">
-        {/* Image */}
-        <div
-          className="shrink-0 w-[72px] h-[72px] rounded-lg overflow-hidden"
-          style={{ background: 'var(--color-bg-secondary)' }}
-        >
-          <img
-            src={imgSrc}
-            alt={recipe.title}
-            width={72}
-            height={72}
-            loading="lazy"
-            className="w-full h-full object-cover"
-            onError={() => setImgSrc(placeholder)}
-          />
-        </div>
-
-        {/* Info */}
-        <div className="flex-1 min-w-0 flex flex-col justify-center">
-          <p className="text-sm font-medium leading-snug truncate" style={{ color: 'var(--color-text-primary)' }}>
-            {recipe.title}
-          </p>
-          <p className="text-xs mt-0.5 capitalize" style={{ color: 'var(--color-text-muted)' }}>
-            {recipe.category}
-            {(recipe.displayServings ?? recipe.servings)
-              ? ` · Serves ${recipe.displayServings ?? recipe.servings}`
-              : ''}
-          </p>
-          <p className="text-sm font-semibold mt-1" style={{ color: 'var(--color-primary)' }}>
-            ${(recipe.adjustedPrice ?? recipe.price).toFixed(2)}
-            {recipe.adjustedPrice !== undefined && recipe.adjustedPrice !== recipe.price && (
-              <span className="text-xs font-normal ml-1" style={{ color: 'var(--color-text-muted)' }}>
-                adj.
-              </span>
-            )}
-          </p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-col gap-1.5 shrink-0 justify-center">
-          <button
-            onClick={onSave}
-            className="text-xs px-3 py-1.5 rounded-lg font-medium transition-all duration-150"
-            style={recipe.isSaved ? {
-              background: 'var(--color-primary-light)',
-              color: 'var(--color-primary-pressed)',
-              border: '1px solid var(--color-primary)',
-            } : {
-              background: 'var(--color-primary)',
-              color: '#fff',
-              border: '1px solid var(--color-primary)',
-            }}
-          >
-            {recipe.isSaved ? '✓ Saved' : 'Save'}
-          </button>
-          {recipe.isSaved && (
-            <button
-              onClick={onSwap}
-              disabled={swapping}
-              className="text-xs px-3 py-1.5 rounded-lg transition-all duration-150"
-              style={{
-                background: 'transparent',
-                color: 'var(--color-text-secondary)',
-                border: '1px solid var(--color-border-light)',
-                opacity: swapping ? 0.4 : 1,
-              }}
-            >
-              {swapping ? '…' : 'Swap'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Tags */}
-      {recipe.tags.length > 0 && (
-        <div className="px-4 pb-4 flex flex-wrap gap-1">
-          {recipe.tags.slice(0, 4).map((tag) => (
-            <span
-              key={tag}
-              className="text-xs px-2 py-0.5 rounded-full"
-              style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-muted)' }}
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
