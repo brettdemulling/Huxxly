@@ -237,3 +237,21 @@ model UserStoreSelection {
   @@index([userId])
   @@map("user_store_selections")
 }
+
+model Order {
+  id                  String   @id @default(cuid())
+  userId              String
+  stripeSessionId     String   @unique
+  stripePaymentIntent String?
+  status              String   @default("pending")
+  amountTotal         Int      @default(0)
+  currency            String   @default("usd")
+  lineItemsJson       Json
+  metadataJson        Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("orders")
+}

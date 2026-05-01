@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { generateRecipesFromIntent } from '@/lib/ai/generateRecipes';
 import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
+import { searchProducts } from '@/lib/products/productOrchestrator';
 
 const SUPPLEMENT_THRESHOLD = 5; // trigger AI generation below this many DB results
 
@@ -16,6 +17,7 @@ export interface SearchMeta {
   intentFlags: string[];
   dbCount: number;
   aiCount: number;
+  realApiCount: number;
   fallbackUsed: boolean;
   totalCount: number;
 }
@@ -299,12 +301,56 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     tags: r.tags,
   }));
 
-  // ── STEP 7: AI supplement — fires when DB results are sparse ──────────────
-  let finalResults: RecipeSearchResult[] = dbResults;
+  // ── STEP 6.5: Real API enrichment (Spoonacular → Kroger → Walmart → DB) ───
+  // Only activates when an external API key is configured.
+  // On failure, falls through silently — existing DB results are unaffected.
+  let realApiResults: RecipeSearchResult[] = [];
+  if (hasQuery && process.env.SPOONACULAR_API_KEY) {
+    try {
+      const realProducts = await searchProducts(query.trim(), 10);
+      const existingTitles = new Set(dbResults.map((r) => r.title.toLowerCase()));
+
+      realApiResults = realProducts
+        .filter((p) => p.source !== 'db' && !existingTitles.has(p.title.toLowerCase()))
+        .map((p): RecipeSearchResult => ({
+          id: `real-${p.id}`,
+          type: 'meal',
+          title: p.title,
+          price: p.price,
+          adjustedPrice: intent.servings
+            ? parseFloat(((p.price / Math.max(p.servings, 1)) * intent.servings).toFixed(2))
+            : p.price,
+          description: `${p.category} · from ${p.source}`,
+          score: 3,
+          imageUrl: p.imageUrl ?? undefined,
+          servings: p.servings,
+          displayServings: intent.servings,
+          category: p.category,
+          tags: p.tags,
+        }))
+        // Apply same budget soft-penalty used for AI results
+        .map((r) => {
+          if (intent.budgetTotal !== undefined && r.adjustedPrice > intent.budgetTotal) {
+            return { ...r, score: Math.max(0, r.score - 4) };
+          }
+          return r;
+        });
+    } catch {
+      // Real API enrichment is always optional; never let it break search
+      realApiResults = [];
+    }
+  }
+
+  // Merge DB + real API results, sort once
+  const mergedBase: RecipeSearchResult[] = [...dbResults, ...realApiResults];
+  mergedBase.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
+
+  // ── STEP 7: AI supplement — fires when combined base results are sparse ────
+  let finalResults: RecipeSearchResult[] = mergedBase;
   let aiResults: RecipeSearchResult[] = [];
 
-  if (hasQuery && dbResults.length < SUPPLEMENT_THRESHOLD) {
-    const needed = Math.max(6, SUPPLEMENT_THRESHOLD * 2 - dbResults.length);
+  if (hasQuery && mergedBase.length < SUPPLEMENT_THRESHOLD) {
+    const needed = Math.max(6, SUPPLEMENT_THRESHOLD * 2 - mergedBase.length);
     aiResults = await generateRecipesFromIntent(query, intent, needed);
 
     if (aiResults.length > 0) {
@@ -320,8 +366,8 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
           return r;
         });
 
-      // Merge DB (trusted baseline) + AI (gap filler), sort once
-      const merged = ([...dbResults, ...fresh] as RecipeSearchResult[]);
+      // Merge DB+realAPI (trusted baseline) + AI (gap filler), sort once
+      const merged = ([...mergedBase, ...fresh] as RecipeSearchResult[]);
       merged.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
       finalResults = merged.slice(0, limit);
     }
@@ -361,6 +407,7 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     intentFlags: intent.intentFlags,
     dbCount: dbResults.length,
     aiCount: aiResults.length,
+    realApiCount: realApiResults.length,
     fallbackUsed,
     totalCount: finalResults.length,
   };
