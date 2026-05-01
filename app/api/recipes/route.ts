@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { searchRecipes } from '@/lib/search/searchEngine';
 import { getSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db';
+import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
 
 // GET /api/recipes?q=pasta&limit=20
 export async function GET(request: NextRequest) {
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
       meta,
     });
   } catch {
-    return NextResponse.json({ recipes: [], meta: null });
+    const fallback = generateFallbackRecipes({ dietTags: [], intentFlags: [] });
+    return NextResponse.json({ recipes: fallback.map((r) => ({ ...r, isSaved: false })), meta: null });
   }
 }

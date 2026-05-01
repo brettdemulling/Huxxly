@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { generateRecipesFromIntent } from '@/lib/ai/generateRecipes';
+import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
 
 const SUPPLEMENT_THRESHOLD = 5; // trigger AI generation below this many DB results
 
@@ -322,16 +323,23 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     }
   }
 
-  // ── Final guarantee — never return empty when any data source has results ──
+  // ── Final guarantee — never return empty; top up to minimum 5 ────────────
   if (finalResults.length === 0) {
-    finalResults = aiResults.length > 0 ? aiResults.slice(0, 5) : dbResults.slice(0, 5);
+    finalResults = generateFallbackRecipes(intent) as RecipeSearchResult[];
+  } else if (hasQuery && finalResults.length < 5) {
+    const existingIds = new Set(finalResults.map((r) => r.id));
+    const topUp = (generateFallbackRecipes(intent) as RecipeSearchResult[])
+      .filter((r) => !existingIds.has(r.id));
+    finalResults = [...finalResults, ...topUp].slice(0, 5);
   }
 
+  const fallbackUsed = finalResults.some((r) => r.id.startsWith('fallback-'));
   console.log('[SEARCH_PIPELINE]', {
     query,
     dbCount: dbResults.length,
     aiCount: aiResults.length,
     finalCount: finalResults.length,
+    fallbackUsed,
   });
 
   // ── STEP 8: Build meta from authoritative intent + final result set ────────

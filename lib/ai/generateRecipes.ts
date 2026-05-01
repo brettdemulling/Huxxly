@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '@/lib/db';
 import { runtime } from '@/lib/config/runtime';
+import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
 
 // ─── Local types (no import from searchEngine to avoid circular deps) ─────────
 
@@ -168,10 +169,7 @@ Required shape per item:
       };
     });
   } catch (err) {
-    console.error(
-      '[generateRecipes] AI generation failed, falling back to DB-only results:',
-      err instanceof Error ? err.message : String(err),
-    );
-    return [];
+    console.error('[AI_RECIPE_ERROR]', err instanceof Error ? err.message : String(err));
+    return generateFallbackRecipes(intent) as AIRecipeResult[];
   }
 }

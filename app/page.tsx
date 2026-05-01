@@ -627,11 +627,11 @@ export default function Home() {
           className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1"
           style={{ minHeight: '20px' }}
         >
-          {(searchLoading || !searchMeta) ? (
+          {searchLoading ? (
             <span className="text-xs skeleton-pulse" style={{ color: 'var(--color-text-muted)' }}>
-              — servings &nbsp;·&nbsp; calculating budget… &nbsp;·&nbsp; estimating total…
+              Searching…
             </span>
-          ) : (
+          ) : searchMeta ? (
             <>
               <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
                 {recipes.length} result{recipes.length !== 1 ? 's' : ''}
@@ -652,7 +652,7 @@ export default function Home() {
                 </span>
               )}
             </>
-          )}
+          ) : null}
         </div>
       )}
 
