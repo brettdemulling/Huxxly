@@ -375,7 +375,7 @@ export default function Home() {
             </span>
             <div className="flex gap-2">
               <button
-                onClick={generateCart}
+                onClick={() => generateCart()}
                 disabled={cartLoading}
                 className="text-xs font-medium rounded-lg px-3 py-1.5 transition-colors duration-150"
                 style={{
