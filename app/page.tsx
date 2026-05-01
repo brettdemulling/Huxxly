@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
 import { type SearchState } from '@/lib/state/searchStateMachine';
+import { type CartState, cartTransition } from '@/lib/state/cartStateMachine';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export default function Home() {
 
   // Cart + meal plan state
   const [cart, setCart] = useState<CartData | null>(null);
-  const [cartLoading, setCartLoading] = useState(false);
+  const [cartState, setCartState] = useState<CartState>('IDLE');
   const [cartOpen, setCartOpen] = useState(false);
 
   // Multi-store state
@@ -228,11 +229,8 @@ export default function Home() {
 
   // preserveOpen: true when switching stores (avoids panel flash during re-fetch)
   async function generateCart(opts?: { zipCode?: string; storeId?: string; preserveOpen?: boolean }) {
-    setCartLoading(true);
-    if (!opts?.preserveOpen) {
-      setCart(null);
-      setPlan(null);
-    }
+    setCartState(cartTransition(cartState, { type: opts?.preserveOpen ? 'SWITCH_STORE' : 'GENERATE_CART' }));
+    if (!opts?.preserveOpen) { setCart(null); setPlan(null); }
     try {
       const params = new URLSearchParams();
       if (opts?.zipCode) params.set('zipCode', opts.zipCode);
@@ -245,8 +243,9 @@ export default function Home() {
       setCart(data);
       setCartOpen(true);
       setPlanOpen(false);
-    } finally {
-      setCartLoading(false);
+      setCartState(cartTransition('LOADING', { type: 'CART_LOADED', itemCount: data.items.length }));
+    } catch {
+      setCartState(cartTransition('LOADING', { type: 'CART_ERROR' }));
     }
   }
 
@@ -404,15 +403,15 @@ export default function Home() {
             <div className="flex gap-2">
               <button
                 onClick={() => generateCart()}
-                disabled={cartLoading}
+                disabled={cartState === 'LOADING' || cartState === 'STORE_SWITCHING'}
                 className="text-xs font-medium rounded-lg px-3 py-1.5 transition-colors duration-150"
                 style={{
                   background: 'var(--color-primary)',
                   color: '#fff',
-                  opacity: cartLoading ? 0.55 : 1,
+                  opacity: cartState === 'LOADING' || cartState === 'STORE_SWITCHING' ? 0.55 : 1,
                 }}
               >
-                {cartLoading ? 'Building…' : 'Generate Instant Cart'}
+                {cartState === 'LOADING' || cartState === 'STORE_SWITCHING' ? 'Building…' : 'Generate Instant Cart'}
               </button>
               <button
                 onClick={generatePlan}
@@ -505,13 +504,13 @@ export default function Home() {
               <select
                 value={selectedStoreId}
                 onChange={(e) => handleStoreChange(e.target.value)}
-                disabled={cartLoading}
+                disabled={cartState === 'LOADING' || cartState === 'STORE_SWITCHING'}
                 className="w-full text-xs rounded-lg px-3 py-1.5 outline-none transition-colors duration-150"
                 style={{
                   border: '1px solid var(--color-border-light)',
                   background: 'var(--color-surface)',
                   color: 'var(--color-text-primary)',
-                  opacity: cartLoading ? 0.6 : 1,
+                  opacity: cartState === 'LOADING' || cartState === 'STORE_SWITCHING' ? 0.6 : 1,
                 }}
               >
                 {availableStores.map((store) => (

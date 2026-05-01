@@ -1,38 +1,16 @@
-import { prisma } from '@/lib/db';
+import { CartRepository } from '@/lib/repositories/CartRepository';
 import { resolveStores, resolveStore } from '@/lib/domains/stores';
 import { applyPricing, sumTotal } from '@/lib/domains/pricing';
+import type { CartResult, CartItem, StoreCart } from '@/lib/contracts';
 
-export interface CartItem {
-  name: string;
-  estimatedCost: number;
-}
-
-export interface StoreCart {
-  storeId: string;
-  storeName: string;
-  priceMultiplier: number;
-  items: { name: string; adjustedCost: number }[];
-  totalCost: number;
-}
-
-export interface CartResult {
-  items: CartItem[];
-  totalCost: number;
-  recipeCount: number;
-  storeId?: string;
-  storeName?: string;
-  stores?: StoreCart[];
-}
+export type { CartResult, CartItem, StoreCart };
 
 export async function runCart(
   userId: string,
   zipCode?: string,
   storeId?: string,
 ): Promise<CartResult> {
-  const saved = await prisma.savedRecipe.findMany({
-    where: { userId },
-    include: { recipe: true },
-  });
+  const saved = await CartRepository.getSavedRecipes(userId);
 
   if (!saved.length) {
     return { items: [], totalCost: 0, recipeCount: 0 };
@@ -46,8 +24,10 @@ export async function runCart(
     return { items, totalCost, recipeCount: saved.length };
   }
 
-  const stores = resolveStores(zipCode);
-  const selectedStore = resolveStore(zipCode, storeId);
+  const [stores, selectedStore] = await Promise.all([
+    resolveStores(zipCode),
+    resolveStore(zipCode, storeId),
+  ]);
 
   const storesCarts: StoreCart[] = stores.map((store) => {
     const priced = applyPricing(baseItems, store);
