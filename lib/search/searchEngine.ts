@@ -1,4 +1,7 @@
 import { prisma } from '@/lib/db';
+import { generateRecipesFromIntent } from '@/lib/ai/generateRecipes';
+
+const SUPPLEMENT_THRESHOLD = 5; // trigger AI generation below this many DB results
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -275,8 +278,8 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
   // ── STEP 5: Sort — score DESC, adjustedPrice ASC as tie-breaker ───────────
   relevant.sort((a, b) => b.score - a.score || a.ap - b.ap);
 
-  // ── STEP 6: Shape results ─────────────────────────────────────────────────
-  const results = relevant.slice(0, limit).map(({ r, ap, score }): RecipeSearchResult => ({
+  // ── STEP 6: Shape DB results ──────────────────────────────────────────────
+  const dbResults = relevant.slice(0, limit).map(({ r, ap, score }): RecipeSearchResult => ({
     id: r.id,
     type: 'meal',
     title: r.name,
@@ -291,9 +294,33 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     tags: r.tags,
   }));
 
-  // ── STEP 7: Build meta from authoritative intent ──────────────────────────
+  // ── STEP 7: AI supplement — fires when DB results are sparse ──────────────
+  let finalResults: RecipeSearchResult[] = dbResults;
+
+  if (hasQuery && dbResults.length < SUPPLEMENT_THRESHOLD) {
+    const needed = Math.max(6, SUPPLEMENT_THRESHOLD * 2 - dbResults.length);
+    const aiResults = await generateRecipesFromIntent(query, intent, needed);
+
+    if (aiResults.length > 0) {
+      // Deduplicate: skip AI recipes whose names already appear in DB results
+      const existingNames = new Set(dbResults.map((r) => r.title.toLowerCase()));
+      let fresh = aiResults.filter((r) => !existingNames.has(r.title.toLowerCase()));
+
+      // Apply same budget hard constraint to AI results
+      if (intent.budgetTotal !== undefined) {
+        fresh = fresh.filter((r) => r.adjustedPrice <= intent.budgetTotal!);
+      }
+
+      // Merge and re-sort: score DESC, adjustedPrice ASC
+      const merged = ([...dbResults, ...fresh] as RecipeSearchResult[]);
+      merged.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
+      finalResults = merged.slice(0, limit);
+    }
+  }
+
+  // ── STEP 8: Build meta from authoritative intent + final result set ────────
   const estimatedTotal = parseFloat(
-    results.reduce((sum, r) => sum + r.adjustedPrice, 0).toFixed(2),
+    finalResults.reduce((sum, r) => sum + r.adjustedPrice, 0).toFixed(2),
   );
 
   const meta: SearchMeta = {
@@ -306,5 +333,5 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     intentFlags: intent.intentFlags,
   };
 
-  return { results, meta };
+  return { results: finalResults, meta };
 }
