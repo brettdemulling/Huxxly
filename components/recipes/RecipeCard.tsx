@@ -1,26 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { costPerServing } from '@/lib/domains/servings';
+import Link from 'next/link';
+import { useState } from 'react';
+import type { RecipeViewModel } from '@/lib/view-models/recipeViewModel';
 
-export interface Recipe {
-  id: string;
-  title: string;
-  price: number;
-  adjustedPrice?: number;
-  category: string;
-  tags: string[];
-  imageUrl?: string;
-  servings?: number;
-  displayServings?: number;
-  isSaved: boolean;
-  cookTimeMinutes?: number;
-  cuisine?: string;
-  calories?: number;
-}
-
-const PLACEHOLDER = (name: string) =>
-  `https://placehold.co/480x200/F1F5F9/94A3B8?text=${encodeURIComponent(name.slice(0, 2))}`;
+const PLACEHOLDER = 'https://placehold.co/480x200/059669/FFFFFF?text=Recipe';
 
 function ClockIcon() {
   return (
@@ -55,29 +39,21 @@ export function RecipeCard({
   onSave,
   onSwap,
 }: {
-  recipe: Recipe;
+  recipe: RecipeViewModel;
   swapping: boolean;
   onSave: () => void;
   onSwap: () => void;
 }) {
-  const placeholder = PLACEHOLDER(recipe.title);
-  const [imgSrc, setImgSrc] = useState(recipe.imageUrl ?? placeholder);
-
-  useEffect(() => {
-    setImgSrc(recipe.imageUrl ?? placeholder);
-  }, [recipe.imageUrl, placeholder]);
-
-  const displayPrice = recipe.adjustedPrice ?? recipe.price;
-  const servings = recipe.displayServings ?? recipe.servings;
-  const perServing = servings && servings > 0 ? costPerServing(displayPrice, servings) : null;
-  const priceAdjusted = recipe.adjustedPrice !== undefined && recipe.adjustedPrice !== recipe.price;
+  const [imgSrc, setImgSrc] = useState(recipe.image);
 
   return (
-    <div
-      className="rounded-2xl overflow-hidden transition-shadow duration-150"
+    <Link
+      href={`/recipe/${recipe.id}`}
+      className="block rounded-2xl overflow-hidden transition-shadow duration-150"
       style={{
         background: 'var(--color-surface)',
         border: '1px solid var(--color-border-light)',
+        textDecoration: 'none',
       }}
       onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
       onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
@@ -92,7 +68,7 @@ export function RecipeCard({
           alt={recipe.title}
           loading="lazy"
           className="w-full h-full object-cover"
-          onError={() => setImgSrc(placeholder)}
+          onError={() => setImgSrc(PLACEHOLDER)}
         />
         {/* Category chip */}
         <div className="absolute top-3 left-3">
@@ -107,10 +83,10 @@ export function RecipeCard({
             {recipe.category}
           </span>
         </div>
-        {/* Save button overlay */}
+        {/* Save button — stops propagation so it doesn't navigate */}
         <div className="absolute top-3 right-3">
           <button
-            onClick={onSave}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSave(); }}
             className="text-xs font-semibold px-3 py-1.5 rounded-full transition-all duration-150"
             style={recipe.isSaved ? {
               background: 'var(--color-primary)',
@@ -128,11 +104,7 @@ export function RecipeCard({
 
       {/* Content */}
       <div className="px-4 pt-3 pb-4">
-        {/* Title */}
-        <p
-          className="text-sm font-semibold leading-snug"
-          style={{ color: 'var(--color-text-primary)' }}
-        >
+        <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--color-text-primary)' }}>
           {recipe.title}
         </p>
 
@@ -144,17 +116,17 @@ export function RecipeCard({
           {recipe.cuisine && (
             <span className="text-xs">{recipe.cuisine}</span>
           )}
-          {recipe.cookTimeMinutes && (
+          {recipe.cookTime > 0 && (
             <span className="flex items-center gap-0.5 text-xs">
-              <ClockIcon />{recipe.cookTimeMinutes}m
+              <ClockIcon />{recipe.cookTime}m
             </span>
           )}
-          {servings && (
+          {recipe.servings > 0 && (
             <span className="flex items-center gap-0.5 text-xs">
-              <PeopleIcon />Serves {servings}
+              <PeopleIcon />Serves {recipe.servings}
             </span>
           )}
-          {recipe.calories && (
+          {recipe.calories !== null && (
             <span className="flex items-center gap-0.5 text-xs">
               <FlameIcon />{recipe.calories} cal
             </span>
@@ -165,20 +137,17 @@ export function RecipeCard({
         <div className="flex items-center justify-between mt-2.5">
           <div className="flex items-baseline gap-1.5">
             <span className="text-base font-bold" style={{ color: 'var(--color-primary)' }}>
-              ${displayPrice.toFixed(2)}
+              ${recipe.totalPrice.toFixed(2)}
             </span>
-            {priceAdjusted && (
-              <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>adj.</span>
-            )}
-            {perServing !== null && (
+            {recipe.pricePerServing > 0 && recipe.pricePerServing !== recipe.totalPrice && (
               <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                · ${perServing}/serving
+                · ${recipe.pricePerServing}/serving
               </span>
             )}
           </div>
           {recipe.isSaved && (
             <button
-              onClick={onSwap}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSwap(); }}
               disabled={swapping}
               className="text-xs px-3 py-1 rounded-lg transition-all duration-150"
               style={{
@@ -193,10 +162,10 @@ export function RecipeCard({
           )}
         </div>
 
-        {/* Tags */}
-        {recipe.tags.length > 0 && (
+        {/* Dietary tags */}
+        {recipe.dietaryFlags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2.5">
-            {recipe.tags.slice(0, 5).map((tag) => (
+            {recipe.dietaryFlags.slice(0, 5).map((tag) => (
               <span
                 key={tag}
                 className="text-xs px-2 py-0.5 rounded-full"
@@ -211,6 +180,6 @@ export function RecipeCard({
           </div>
         )}
       </div>
-    </div>
+    </Link>
   );
 }

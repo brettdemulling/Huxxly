@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { generateRecipesFromIntent } from '@/lib/ai/generateRecipes';
 import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
 import { searchProducts } from '@/lib/products/productOrchestrator';
+import { shapeResults } from '@/lib/search/resultShaper';
 
 const SUPPLEMENT_THRESHOLD = 5; // trigger AI generation below this many DB results
 
@@ -391,6 +392,9 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
       .filter((r) => !existingIds.has(r.id));
     finalResults = [...finalResults, ...topUp].slice(0, 5);
   }
+
+  // ── Result shaping — dedup, diversity, guaranteed images ─────────────────
+  finalResults = shapeResults(finalResults, limit) as RecipeSearchResult[];
 
   const fallbackUsed = finalResults.some((r) => r.id.startsWith('fallback-'));
   console.log('[SEARCH_PIPELINE]', {

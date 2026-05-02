@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { SavingsBanner } from '@/components/analytics/SavingsBanner';
-import { RecipeCard, type Recipe } from '@/components/recipes/RecipeCard';
+import { RecipeCard } from '@/components/recipes/RecipeCard';
+import type { RecipeViewModel } from '@/lib/view-models/recipeViewModel';
 import { DietaryFilterBar } from '@/components/recipes/DietaryFilterBar';
 import { type SearchState } from '@/lib/state/searchStateMachine';
 import { type CartState, cartTransition } from '@/lib/state/cartStateMachine';
@@ -83,14 +85,14 @@ interface SearchMeta {
 export default function Home() {
   // Recipe search state
   const [searchQuery, setSearchQuery] = useState('');
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [recipes, setRecipes] = useState<RecipeViewModel[]>([]);
   const [searchState, setSearchState] = useState<SearchState>('IDLE');
   const [hasInteracted, setHasInteracted] = useState(false);
   const [selectedDiets, setSelectedDiets] = useState<DietaryTag[]>([]);
   const [globalServings, setGlobalServings] = useState<ServingCount | null>(null);
 
   // Trending recipes — loaded on mount, shown in hero before first interaction
-  const [trending, setTrending] = useState<Recipe[]>([]);
+  const [trending, setTrending] = useState<RecipeViewModel[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(true);
 
   // Cart + meal plan state
@@ -132,7 +134,7 @@ export default function Home() {
     setTrendingLoading(true);
     fetch('/api/recipes?q=&limit=6')
       .then((r) => r.json())
-      .then((data: { recipes: Recipe[] }) => {
+      .then((data: { recipes: RecipeViewModel[] }) => {
         if (!cancelled) setTrending(data.recipes ?? []);
       })
       .catch(() => { /* silently fail — trending is optional */ })
@@ -153,7 +155,7 @@ export default function Home() {
     try {
       const res = await fetch(`/api/recipes?q=${encodeURIComponent(effectiveQuery)}&limit=20`);
       if (!res.ok) { setRecipes([]); setSearchMeta(null); setSearchState('ERROR'); return; }
-      const data = await res.json() as { recipes: Recipe[]; meta: SearchMeta | null };
+      const data = await res.json() as { recipes: RecipeViewModel[]; meta: SearchMeta | null };
       console.log('[INTENT]', data.meta);
       console.log('[SEARCH_META]', { ...data.meta, resultsCount: (data.recipes ?? []).length });
       const fetched = data.recipes ?? [];
@@ -227,7 +229,7 @@ export default function Home() {
 
   // ── Save / Swap ────────────────────────────────────────────────────────────
 
-  async function toggleSave(recipe: Recipe) {
+  async function toggleSave(recipe: RecipeViewModel) {
     const wasSaved = recipe.isSaved;
     setRecipes((prev) => prev.map((r) => r.id === recipe.id ? { ...r, isSaved: !wasSaved } : r));
 
@@ -245,7 +247,7 @@ export default function Home() {
     }
   }
 
-  async function handleSwap(recipe: Recipe) {
+  async function handleSwap(recipe: RecipeViewModel) {
     const target = recipes.find((r) => r.isSaved && r.id !== recipe.id);
     if (!target) { toast('Save another recipe first, then swap.'); return; }
     setSwapping(recipe.id);
@@ -346,7 +348,7 @@ export default function Home() {
     }
     // Search-average comparison: compare cart cost to avg search result price × recipeCount
     if (recipes.length > 0 && cart.recipeCount > 0) {
-      const avgSearchPrice = recipes.reduce((s, r) => s + (r.adjustedPrice ?? r.price), 0) / recipes.length;
+      const avgSearchPrice = recipes.reduce((s, r) => s + r.totalPrice, 0) / recipes.length;
       const stdCost = avgSearchPrice * cart.recipeCount;
       const saved = stdCost - cart.totalCost;
       if (saved > 0.01) {
@@ -706,13 +708,14 @@ export default function Home() {
           ) : trending.length > 0 ? (
             <div className="flex flex-col gap-3">
               {trending.map((recipe) => (
-                <button
+                <Link
                   key={recipe.id}
-                  onClick={() => handleCategoryShortcut(recipe.category)}
-                  className="flex items-center gap-3 rounded-2xl overflow-hidden text-left transition-shadow duration-150"
+                  href={`/recipe/${recipe.id}`}
+                  className="flex items-center gap-3 rounded-2xl overflow-hidden transition-shadow duration-150"
                   style={{
                     background: 'var(--color-surface)',
                     border: '1px solid var(--color-border-light)',
+                    textDecoration: 'none',
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)')}
                   onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
@@ -721,16 +724,12 @@ export default function Home() {
                     className="shrink-0 w-20 h-20 overflow-hidden"
                     style={{ background: 'var(--color-bg-secondary)' }}
                   >
-                    {recipe.imageUrl ? (
-                      <img
-                        src={recipe.imageUrl}
-                        alt={recipe.title}
-                        loading="lazy"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full" style={{ background: 'var(--color-bg-secondary)' }} />
-                    )}
+                    <img
+                      src={recipe.image}
+                      alt={recipe.title}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                   <div className="flex-1 min-w-0 py-3 pr-4">
                     <p className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
@@ -738,19 +737,19 @@ export default function Home() {
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs capitalize" style={{ color: 'var(--color-text-muted)' }}>
-                        {recipe.cuisine ?? recipe.category}
+                        {recipe.cuisine}
                       </span>
-                      {recipe.cookTimeMinutes && (
+                      {recipe.cookTime > 0 && (
                         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                          · {recipe.cookTimeMinutes}m
+                          · {recipe.cookTime}m
                         </span>
                       )}
                     </div>
                     <p className="text-sm font-semibold mt-1" style={{ color: 'var(--color-primary)' }}>
-                      ${(recipe.adjustedPrice ?? recipe.price).toFixed(2)}
+                      ${recipe.totalPrice.toFixed(2)}
                     </p>
                   </div>
-                </button>
+                </Link>
               ))}
             </div>
           ) : null}
