@@ -53,6 +53,15 @@ const SEARCH_HINTS = [
   'Quick weeknight meals under $30',
 ];
 
+const CATEGORY_SHORTCUTS = [
+  { label: 'Chicken', emoji: '🍗', query: 'chicken' },
+  { label: 'Pasta',   emoji: '🍝', query: 'pasta' },
+  { label: 'Beef',    emoji: '🥩', query: 'beef' },
+  { label: 'Seafood', emoji: '🦐', query: 'seafood' },
+  { label: 'Vegan',   emoji: '🥗', query: 'vegan' },
+  { label: 'Breakfast', emoji: '🍳', query: 'breakfast' },
+];
+
 // ─── Backend-provided search meta ────────────────────────────────────────────
 
 interface SearchMeta {
@@ -79,6 +88,10 @@ export default function Home() {
   const [hasInteracted, setHasInteracted] = useState(false);
   const [selectedDiets, setSelectedDiets] = useState<DietaryTag[]>([]);
   const [globalServings, setGlobalServings] = useState<ServingCount | null>(null);
+
+  // Trending recipes — loaded on mount, shown in hero before first interaction
+  const [trending, setTrending] = useState<Recipe[]>([]);
+  const [trendingLoading, setTrendingLoading] = useState(true);
 
   // Cart + meal plan state
   const [cart, setCart] = useState<CartData | null>(null);
@@ -111,6 +124,20 @@ export default function Home() {
       setHint(SEARCH_HINTS[hintRef.current]);
     }, 3500);
     return () => clearInterval(id);
+  }, []);
+
+  // Load trending on mount (empty query returns top results by createdAt)
+  useEffect(() => {
+    let cancelled = false;
+    setTrendingLoading(true);
+    fetch('/api/recipes?q=&limit=6')
+      .then((r) => r.json())
+      .then((data: { recipes: Recipe[] }) => {
+        if (!cancelled) setTrending(data.recipes ?? []);
+      })
+      .catch(() => { /* silently fail — trending is optional */ })
+      .finally(() => { if (!cancelled) setTrendingLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const toast = useCallback((msg: string) => {
@@ -177,6 +204,14 @@ export default function Home() {
     const t = setTimeout(() => { void fetchRecipes(searchQuery); }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, selectedDiets, hasInteracted, fetchRecipes]);
+
+  // ── Category shortcut ──────────────────────────────────────────────────────
+
+  function handleCategoryShortcut(query: string) {
+    setSearchQuery(query);
+    setHasInteracted(true);
+    void fetchRecipes(query);
+  }
 
   // ── Dietary + servings ─────────────────────────────────────────────────────
 
@@ -361,6 +396,25 @@ export default function Home() {
         <p className="mt-2 text-sm font-light leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
           Search recipes, save your favorites, then generate a grocery cart or meal plan.
         </p>
+      </div>
+
+      {/* ── Category shortcuts ────────────────────────────────────────────── */}
+      <div className="flex gap-2 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
+        {CATEGORY_SHORTCUTS.map(({ label, emoji, query }) => (
+          <button
+            key={query}
+            onClick={() => handleCategoryShortcut(query)}
+            className="shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full transition-all duration-150"
+            style={{
+              background: searchQuery === query ? 'var(--color-primary)' : 'var(--color-bg-secondary)',
+              color: searchQuery === query ? '#fff' : 'var(--color-text-secondary)',
+              border: `1px solid ${searchQuery === query ? 'var(--color-primary)' : 'var(--color-border-light)'}`,
+            }}
+          >
+            <span>{emoji}</span>
+            <span>{label}</span>
+          </button>
+        ))}
       </div>
 
       {/* ── Recipe search bar (single — connected to fetchRecipes) ────────── */}
@@ -626,6 +680,80 @@ export default function Home() {
               {planLoading ? 'Generating…' : 'Auto-Generate Weekly Plan'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Trending section — shown before first search interaction ─────── */}
+      {!hasInteracted && (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
+            Trending this week
+          </p>
+          {trendingLoading ? (
+            <div className="flex flex-col gap-3">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="rounded-2xl overflow-hidden skeleton-pulse"
+                  style={{
+                    background: 'var(--color-bg-secondary)',
+                    border: '1px solid var(--color-border-light)',
+                    height: '80px',
+                  }}
+                />
+              ))}
+            </div>
+          ) : trending.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {trending.map((recipe) => (
+                <button
+                  key={recipe.id}
+                  onClick={() => handleCategoryShortcut(recipe.category)}
+                  className="flex items-center gap-3 rounded-2xl overflow-hidden text-left transition-shadow duration-150"
+                  style={{
+                    background: 'var(--color-surface)',
+                    border: '1px solid var(--color-border-light)',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
+                >
+                  <div
+                    className="shrink-0 w-20 h-20 overflow-hidden"
+                    style={{ background: 'var(--color-bg-secondary)' }}
+                  >
+                    {recipe.imageUrl ? (
+                      <img
+                        src={recipe.imageUrl}
+                        alt={recipe.title}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full" style={{ background: 'var(--color-bg-secondary)' }} />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0 py-3 pr-4">
+                    <p className="text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
+                      {recipe.title}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs capitalize" style={{ color: 'var(--color-text-muted)' }}>
+                        {recipe.cuisine ?? recipe.category}
+                      </span>
+                      {recipe.cookTimeMinutes && (
+                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                          · {recipe.cookTimeMinutes}m
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm font-semibold mt-1" style={{ color: 'var(--color-primary)' }}>
+                      ${(recipe.adjustedPrice ?? recipe.price).toFixed(2)}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
 

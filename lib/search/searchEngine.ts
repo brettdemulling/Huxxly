@@ -40,6 +40,9 @@ export interface RecipeSearchResult {
   displayServings?: number;
   category: string;
   tags: string[];
+  cookTimeMinutes?: number;
+  cuisine?: string;
+  calories?: number;
 }
 
 // ─── Parsed intent ────────────────────────────────────────────────────────────
@@ -154,6 +157,9 @@ type PrismaRecipe = {
   tags: string[];
   imageUrl: string | null;
   servings: number | null;
+  cookTimeMinutes: number | null;
+  cuisine: string | null;
+  calories: number | null;
 };
 
 function scoreRecipe(r: PrismaRecipe, intent: ParsedIntent): number {
@@ -299,6 +305,9 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     displayServings: intent.servings,
     category: r.category,
     tags: r.tags,
+    cookTimeMinutes: r.cookTimeMinutes ?? undefined,
+    cuisine: r.cuisine ?? undefined,
+    calories: r.calories ?? undefined,
   }));
 
   // ── STEP 6.5: Real API enrichment (Spoonacular → Kroger → Walmart → DB) ───

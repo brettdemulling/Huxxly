@@ -160,19 +160,97 @@ model Event {
 }
 
 model Recipe {
+  id              String   @id @default(cuid())
+  name            String
+  price           Float
+  category        String
+  tags            String[]
+  imageUrl        String?
+  servings        Int?
+  description     String?
+  cuisine         String?
+  cookTimeMinutes Int?
+  prepTimeMinutes Int?
+  calories        Int?
+  externalId      String?  @unique
+  sourceUrl       String?
+  createdAt       DateTime @default(now())
+
+  savedBy       SavedRecipe[]
+  mealPlanItems MealPlanItem[]
+  ingredients   RecipeIngredient[]
+  instructions  RecipeInstruction[]
+  nutrition     RecipeNutrition?
+  views         RecipeView[]
+
+  @@index([category])
+  @@index([externalId])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id         String  @id @default(cuid())
+  recipeId   String
+  name       String
+  measure    String?
+  normalized String?
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId])
+  @@map("recipe_ingredients")
+}
+
+model RecipeInstruction {
+  id       String @id @default(cuid())
+  recipeId String
+  step     Int
+  text     String
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId])
+  @@map("recipe_instructions")
+}
+
+model RecipeNutrition {
+  id        String @id @default(cuid())
+  recipeId  String @unique
+  calories  Int?
+  proteinG  Float?
+  fatG      Float?
+  carbsG    Float?
+  fiberG    Float?
+  sodiumMg  Float?
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@map("recipe_nutrition")
+}
+
+model RecipeView {
   id        String   @id @default(cuid())
-  name      String
-  price     Float
-  category  String
-  tags      String[]
-  imageUrl  String?
-  servings  Int?
+  recipeId  String
+  userId    String?
+  sessionId String?
   createdAt DateTime @default(now())
 
-  savedBy      SavedRecipe[]
-  mealPlanItems MealPlanItem[]
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
 
-  @@map("recipes")
+  @@index([recipeId])
+  @@index([createdAt])
+  @@map("recipe_views")
+}
+
+model SearchQuery {
+  id          String   @id @default(cuid())
+  query       String
+  userId      String?
+  resultCount Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("search_queries")
 }
 
 model SavedRecipe {
