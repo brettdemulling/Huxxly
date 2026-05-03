@@ -4,6 +4,8 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'placehold.co' },
+      { protocol: 'https', hostname: 'www.themealdb.com' },
+      { protocol: 'https', hostname: 'images.unsplash.com' },
       { protocol: 'https', hostname: 'www.kroger.com' },
       { protocol: 'https', hostname: 'i5.walmartimages.com' },
       { protocol: 'https', hostname: 'www.instacart.com' },

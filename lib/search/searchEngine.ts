@@ -1,10 +1,16 @@
 import { prisma } from '@/lib/db';
 import { generateRecipesFromIntent } from '@/lib/ai/generateRecipes';
 import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
-import { searchProducts } from '@/lib/products/productOrchestrator';
 import { shapeResults } from '@/lib/search/resultShaper';
+import { rankResults } from '@/lib/search/ranking';
+import { searchRecipes as searchMealDB } from '@/lib/providers/mealdb/MealDBProvider';
+import { normalizeManyMealDBRecipes } from '@/lib/providers/mealdb/normalizeMealDBRecipe';
+import { batchUpsertMealDB } from '@/lib/repositories/MealDBRecipeRepository';
 
-const SUPPLEMENT_THRESHOLD = 5; // trigger AI generation below this many DB results
+// Call MealDB when DB has fewer than this many results for a non-empty query
+const MEALDB_THRESHOLD = 8;
+// Call AI when even after MealDB enrichment we're still sparse
+const AI_THRESHOLD = 5;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -17,6 +23,7 @@ export interface SearchMeta {
   dietTags: string[];
   intentFlags: string[];
   dbCount: number;
+  mealdbCount: number;
   aiCount: number;
   realApiCount: number;
   fallbackUsed: boolean;
@@ -44,6 +51,7 @@ export interface RecipeSearchResult {
   cookTimeMinutes?: number;
   cuisine?: string;
   calories?: number;
+  source?: 'db' | 'ai' | 'fallback';
 }
 
 // ─── Parsed intent ────────────────────────────────────────────────────────────
@@ -102,7 +110,6 @@ const KNOWN_INGREDIENTS = [
 function parseIntent(query: string): ParsedIntent {
   const q = query.toLowerCase().trim();
 
-  // Servings
   let servings: number | undefined;
   const servingMatchers: RegExp[] = [
     /\bfor\s+(\d+)\s+(?:people|persons?|servings?|adults?|guests?|kids?|of\s+us)\b/,
@@ -116,7 +123,6 @@ function parseIntent(query: string): ParsedIntent {
     if (m?.[1]) { servings = Math.min(Math.max(parseInt(m[1], 10), 1), 20); break; }
   }
 
-  // Budget
   let budgetTotal: number | undefined;
   const budgetMatchers: RegExp[] = [
     /under\s*\$\s*(\d+(?:\.\d+)?)/,
@@ -130,16 +136,9 @@ function parseIntent(query: string): ParsedIntent {
     if (m?.[1]) { budgetTotal = parseFloat(m[1]); break; }
   }
 
-  // Diet tags
   const dietTags = DIET_PATTERNS.flatMap(([rx, tag]) => (rx.test(q) ? [tag] : []));
-
-  // Intent flags
   const intentFlags = INTENT_PATTERNS.flatMap(([rx, flag]) => (rx.test(q) ? [flag] : []));
-
-  // Ingredients
   const ingredients = KNOWN_INGREDIENTS.filter((ing) => q.includes(ing));
-
-  // Raw tokens — words left after removing known signal words
   const rawTokens = q
     .split(/[\s,]+/)
     .map((w) => w.replace(/[^a-z]/g, ''))
@@ -148,7 +147,16 @@ function parseIntent(query: string): ParsedIntent {
   return { servings, budgetTotal, dietTags, intentFlags, ingredients, rawTokens };
 }
 
-// ─── Scorer ───────────────────────────────────────────────────────────────────
+// ─── Price adjustment ─────────────────────────────────────────────────────────
+
+function calcAdjustedPrice(price: number, baseServings: number | null, targetServings?: number): number {
+  if (!targetServings) return price;
+  const base = baseServings ?? 4;
+  if (targetServings === base) return price;
+  return parseFloat(((price / base) * targetServings).toFixed(2));
+}
+
+// ─── DB query + scoring ───────────────────────────────────────────────────────
 
 type PrismaRecipe = {
   id: string;
@@ -161,82 +169,82 @@ type PrismaRecipe = {
   cookTimeMinutes: number | null;
   cuisine: string | null;
   calories: number | null;
+  description: string | null;
 };
 
-function scoreRecipe(r: PrismaRecipe, intent: ParsedIntent): number {
-  const name = r.name.toLowerCase();
-  const cat = r.category.toLowerCase();
-  const tags = r.tags.map((t) => t.toLowerCase());
-  const full = `${name} ${cat} ${tags.join(' ')}`;
-
-  let score = 0;
-
-  // Diet tag matches — highest signal
-  for (const dietTag of intent.dietTags) {
-    const slug = dietTag.replace('-', '');
-    if (tags.some((t) => t === dietTag || t.replace('-', '') === slug)) score += 5;
-    if (name.includes(dietTag.replace('-', ' ')) || name.includes(slug)) score += 3;
-  }
-
-  // Ingredient matches
-  for (const ing of intent.ingredients) {
-    if (name.includes(ing)) score += 4;
-    if (tags.some((t) => t.includes(ing))) score += 2;
-    if (cat.includes(ing)) score += 2;
-  }
-
-  // Intent flag scoring
-  if (intent.intentFlags.includes('cheap')) {
-    // Cheaper recipes rank higher — score inversely proportional to price
-    const priceRank = Math.max(0, 5 - Math.floor(r.price / 8));
-    score += priceRank;
-  }
-  if (intent.intentFlags.includes('quick')) {
-    if (tags.some((t) => /quick|fast|easy|simple/.test(t))) score += 4;
-    if (full.includes('stir') || full.includes('toast') || full.includes('salad')) score += 2;
-  }
-  if (intent.intentFlags.includes('high-protein')) {
-    if (tags.some((t) => /protein|keto|gluten.?free/.test(t))) score += 4;
-    if (['chicken', 'beef', 'salmon', 'shrimp', 'steak', 'turkey', 'pork'].some((p) => name.includes(p))) score += 3;
-  }
-  if (intent.intentFlags.includes('meal-prep')) {
-    if (tags.some((t) => /meal.?prep|batch|healthy/.test(t))) score += 4;
-    if ((r.servings ?? 2) >= 4) score += 3;
-  }
-  if (intent.intentFlags.includes('healthy')) {
-    if (tags.some((t) => /healthy|light|fresh|vegan|vegetarian/.test(t))) score += 4;
-    if (cat === 'salad' || cat === 'hawaiian' || cat === 'seafood') score += 2;
-  }
-  if (intent.intentFlags.includes('comfort')) {
-    if (tags.some((t) => /comfort|hearty|filling|slow.?cook/.test(t))) score += 4;
-    if (['soup', 'bbq', 'american', 'italian'].includes(cat)) score += 2;
-  }
-  if (intent.intentFlags.includes('family')) {
-    if ((r.servings ?? 2) >= 4) score += 3;
-    if (tags.some((t) => /comfort|quick|kid/.test(t))) score += 2;
-  }
-  if (intent.intentFlags.includes('gourmet')) {
-    if (r.price >= 25) score += 3;
-    if (['seafood', 'japanese', 'italian'].includes(cat)) score += 2;
-  }
-
-  // Raw token fuzzy matches
-  for (const token of intent.rawTokens) {
-    if (full.includes(token)) score += 1;
-  }
-
-  // Category name match as fallback
-  if (intent.rawTokens.some((t) => cat.includes(t))) score += 1;
-
-  return score;
+function toSearchResult(r: PrismaRecipe, ap: number, score: number, displayServings?: number): RecipeSearchResult {
+  return {
+    id: r.id,
+    type: 'meal',
+    title: r.name,
+    price: r.price,
+    adjustedPrice: ap,
+    description: r.description ?? `${r.category} · ${r.tags.slice(0, 3).join(', ')}`,
+    score,
+    imageUrl: r.imageUrl ?? undefined,
+    servings: r.servings ?? undefined,
+    displayServings,
+    category: r.category,
+    tags: r.tags,
+    cookTimeMinutes: r.cookTimeMinutes ?? undefined,
+    cuisine: r.cuisine ?? undefined,
+    calories: r.calories ?? undefined,
+    source: 'db',
+  };
 }
 
-// ─── Price/serving adjustment ─────────────────────────────────────────────────
+async function queryAndScoreDB(intent: ParsedIntent, limit: number): Promise<RecipeSearchResult[]> {
+  const allRecipes = await prisma.recipe.findMany({ orderBy: { createdAt: 'desc' } });
 
-function adjustedPrice(recipe: PrismaRecipe, queryServings?: number): number {
-  const base = recipe.servings ?? 2;
-  if (!queryServings || queryServings === base) return recipe.price;
-  return parseFloat(((recipe.price / base) * queryServings).toFixed(2));
+  const candidates = allRecipes.flatMap((r) => {
+    const ap = calcAdjustedPrice(r.price, r.servings, intent.servings);
+
+    // Budget hard constraint
+    if (intent.budgetTotal !== undefined && ap > intent.budgetTotal) return [];
+
+    // Dietary hard constraint — recipe must have ALL required tags
+    if (intent.dietTags.length > 0) {
+      const recipeTags = r.tags.map((t) => t.toLowerCase());
+      const allPresent = intent.dietTags.every((dt) => {
+        const slug = dt.replace('-', '');
+        return recipeTags.some((t) => t === dt || t.replace('-', '') === slug);
+      });
+      if (!allPresent) return [];
+    }
+
+    // Ingredient hard constraint — at least one must match
+    if (intent.ingredients.length > 0) {
+      const full = `${r.name} ${r.category} ${r.tags.join(' ')}`.toLowerCase();
+      if (!intent.ingredients.some((ing) => full.includes(ing))) return [];
+    }
+
+    return [{ r, ap }];
+  });
+
+  // Rank using ranking engine
+  const rankCtx = {
+    tokens: intent.rawTokens,
+    dietTags: intent.dietTags,
+    ingredients: intent.ingredients,
+  };
+
+  const hasQuery = intent.rawTokens.length > 0 || intent.dietTags.length > 0 || intent.ingredients.length > 0;
+
+  const ranked = candidates
+    .map(({ r, ap }) => ({
+      result: toSearchResult(r, ap, 0, intent.servings),
+      r,
+    }))
+    .map(({ result, r }) => {
+      if (!hasQuery) return { ...result, score: 1 };
+      const ranked = rankResults([result], rankCtx);
+      return ranked[0] ?? result;
+    })
+    .filter((r) => !hasQuery || r.score > 0)
+    .sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice)
+    .slice(0, limit);
+
+  return ranked;
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -245,146 +253,116 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
   const intent = parseIntent(query.trim());
   const hasQuery = query.trim().length > 0;
 
-  const allRecipes = await prisma.recipe.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
+  console.log('[SEARCH_START]', { query, intent });
 
-  // ── STEP 1: Pre-compute adjusted price ────────────────────────────────────
-  const withPrice = allRecipes.map((r) => ({
-    r,
-    ap: adjustedPrice(r, intent.servings),
-  }));
+  // ── STEP 1: Query Postgres ─────────────────────────────────────────────────
+  const dbResults = await queryAndScoreDB(intent, limit);
+  console.log(`[SEARCH_RESULT] DB returned ${dbResults.length} results`);
 
-  // ── STEP 2: HARD CONSTRAINTS (run before scoring — must all pass) ─────────
-  const candidates = withPrice.filter(({ r, ap }) => {
-    // Budget: adjusted price must not exceed stated budget
-    if (intent.budgetTotal !== undefined && ap > intent.budgetTotal) return false;
+  // ── STEP 2: MealDB enrichment when DB is sparse ────────────────────────────
+  let mealdbResults: RecipeSearchResult[] = [];
+  let mealdbCount = 0;
 
-    // Dietary: recipe must contain ALL required diet tags
-    if (intent.dietTags.length > 0) {
-      const recipeTags = r.tags.map((t) => t.toLowerCase());
-      const allPresent = intent.dietTags.every((dietTag) => {
-        const slug = dietTag.replace('-', '');
-        return recipeTags.some((t) => t === dietTag || t.replace('-', '') === slug);
-      });
-      if (!allPresent) return false;
-    }
-
-    // Ingredients: recipe must match at least one specified ingredient
-    if (intent.ingredients.length > 0) {
-      const full = `${r.name} ${r.category} ${r.tags.join(' ')}`.toLowerCase();
-      if (!intent.ingredients.some((ing) => full.includes(ing))) return false;
-    }
-
-    return true;
-  });
-
-  // ── STEP 3: SCORE remaining candidates ────────────────────────────────────
-  const scored = candidates.map(({ r, ap }) => ({
-    r,
-    ap,
-    score: hasQuery ? scoreRecipe(r, intent) : 1,
-  }));
-
-  // ── STEP 4: Drop zero-relevance results (only when a query is present) ─────
-  const relevant = scored.filter(({ score }) => !hasQuery || score > 0);
-
-  // ── STEP 5: Sort — score DESC, adjustedPrice ASC as tie-breaker ───────────
-  relevant.sort((a, b) => b.score - a.score || a.ap - b.ap);
-
-  // ── STEP 6: Shape DB results ──────────────────────────────────────────────
-  const dbResults = relevant.slice(0, limit).map(({ r, ap, score }): RecipeSearchResult => ({
-    id: r.id,
-    type: 'meal',
-    title: r.name,
-    price: r.price,
-    adjustedPrice: ap,
-    description: `${r.category} · ${r.tags.slice(0, 3).join(', ')}`,
-    score,
-    imageUrl: r.imageUrl ?? undefined,
-    servings: r.servings ?? undefined,
-    displayServings: intent.servings,
-    category: r.category,
-    tags: r.tags,
-    cookTimeMinutes: r.cookTimeMinutes ?? undefined,
-    cuisine: r.cuisine ?? undefined,
-    calories: r.calories ?? undefined,
-  }));
-
-  // ── STEP 6.5: Real API enrichment (Spoonacular → Kroger → Walmart → DB) ───
-  // Only activates when an external API key is configured.
-  // On failure, falls through silently — existing DB results are unaffected.
-  let realApiResults: RecipeSearchResult[] = [];
-  if (hasQuery && process.env.SPOONACULAR_API_KEY) {
+  if (hasQuery && dbResults.length < MEALDB_THRESHOLD) {
+    console.log(`[MEALDB_FETCH] DB sparse (${dbResults.length} < ${MEALDB_THRESHOLD}), calling MealDB...`);
     try {
-      const realProducts = await searchProducts(query.trim(), 10);
-      const existingTitles = new Set(dbResults.map((r) => r.title.toLowerCase()));
+      const meals = await searchMealDB(query.trim());
+      if (meals.length > 0) {
+        // Normalize
+        const normalized = normalizeManyMealDBRecipes(meals);
 
-      realApiResults = realProducts
-        .filter((p) => p.source !== 'db' && !existingTitles.has(p.title.toLowerCase()))
-        .map((p): RecipeSearchResult => ({
-          id: `real-${p.id}`,
-          type: 'meal',
-          title: p.title,
-          price: p.price,
-          adjustedPrice: intent.servings
-            ? parseFloat(((p.price / Math.max(p.servings, 1)) * intent.servings).toFixed(2))
-            : p.price,
-          description: `${p.category} · from ${p.source}`,
-          score: 3,
-          imageUrl: p.imageUrl ?? undefined,
-          servings: p.servings,
-          displayServings: intent.servings,
-          category: p.category,
-          tags: p.tags,
-        }))
-        // Apply same budget soft-penalty used for AI results
-        .map((r) => {
-          if (intent.budgetTotal !== undefined && r.adjustedPrice > intent.budgetTotal) {
-            return { ...r, score: Math.max(0, r.score - 4) };
-          }
-          return r;
-        });
-    } catch {
-      // Real API enrichment is always optional; never let it break search
-      realApiResults = [];
+        // Filter out recipes already in DB by externalId to avoid redundant upserts
+        const existingExtIds = new Set(
+          (await prisma.recipe.findMany({ select: { externalId: true } }))
+            .map((r) => r.externalId)
+            .filter(Boolean),
+        );
+        const fresh = normalized.filter((n) => !existingExtIds.has(n.externalId));
+
+        // Upsert fresh ones into DB
+        let upserted: import('@/lib/repositories/MealDBRecipeRepository').UpsertedRecipe[] = [];
+        if (fresh.length > 0) {
+          upserted = await batchUpsertMealDB(fresh);
+          mealdbCount = upserted.length;
+        }
+
+        // Build search results from all normalized meals (including already-existing ones)
+        // For already-existing ones, we'll have them in dbResults — so only add truly new ones
+        const existingIds = new Set(dbResults.map((r) => r.id));
+        mealdbResults = upserted
+          .filter((r) => !existingIds.has(r.id))
+          .map((r): RecipeSearchResult => {
+            const ap = calcAdjustedPrice(r.price, r.servings, intent.servings);
+            return {
+              id: r.id,
+              type: 'meal',
+              title: r.name,
+              price: r.price,
+              adjustedPrice: ap,
+              description: r.description ?? r.category,
+              score: 0,
+              imageUrl: r.imageUrl ?? undefined,
+              servings: r.servings ?? undefined,
+              displayServings: intent.servings,
+              category: r.category,
+              tags: r.tags,
+              cookTimeMinutes: r.cookTimeMinutes ?? undefined,
+              cuisine: r.cuisine ?? undefined,
+              calories: r.calories ?? undefined,
+              source: 'db',
+            };
+          });
+      }
+    } catch (err) {
+      console.error('[SEARCH_FALLBACK] MealDB failed:', err instanceof Error ? err.message : err);
+      mealdbResults = [];
     }
   }
 
-  // Merge DB + real API results, sort once
-  const mergedBase: RecipeSearchResult[] = [...dbResults, ...realApiResults];
-  mergedBase.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
+  // ── STEP 3: Merge DB + MealDB, deduplicate by externalId/title ────────────
+  const mergedBase: RecipeSearchResult[] = [...dbResults, ...mealdbResults];
 
-  // ── STEP 7: AI supplement — fires when combined base results are sparse ────
+  // Re-rank the full merged set
+  if (hasQuery && mergedBase.length > 0) {
+    const rankCtx = {
+      tokens: intent.rawTokens,
+      dietTags: intent.dietTags,
+      ingredients: intent.ingredients,
+    };
+    const reranked = rankResults(mergedBase, rankCtx);
+    mergedBase.splice(0, mergedBase.length, ...reranked);
+  } else {
+    mergedBase.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
+  }
+
+  // ── STEP 4: AI supplement — only fires if still very sparse ───────────────
   let finalResults: RecipeSearchResult[] = mergedBase;
   let aiResults: RecipeSearchResult[] = [];
 
-  if (hasQuery && mergedBase.length < SUPPLEMENT_THRESHOLD) {
-    const needed = Math.max(6, SUPPLEMENT_THRESHOLD * 2 - mergedBase.length);
-    aiResults = await generateRecipesFromIntent(query, intent, needed);
+  if (hasQuery && mergedBase.length < AI_THRESHOLD) {
+    const needed = Math.max(6, AI_THRESHOLD * 2 - mergedBase.length);
+    aiResults = await generateRecipesFromIntent(query, intent, needed).catch(() => []);
 
     if (aiResults.length > 0) {
-      // Deduplicate: skip AI recipes whose names already appear in DB results
-      const existingNames = new Set(dbResults.map((r) => r.title.toLowerCase()));
+      const existingTitles = new Set(mergedBase.map((r) => r.title.toLowerCase()));
       const fresh = aiResults
-        .filter((r) => !existingNames.has(r.title.toLowerCase()))
+        .filter((r) => !existingTitles.has(r.title.toLowerCase()))
         .map((r) => {
-          // Soft budget penalty for AI results — penalise score instead of hard exclude
           if (intent.budgetTotal !== undefined && r.adjustedPrice > intent.budgetTotal) {
             return { ...r, score: Math.max(0, r.score - 4) };
           }
           return r;
         });
 
-      // Merge DB+realAPI (trusted baseline) + AI (gap filler), sort once
-      const merged = ([...mergedBase, ...fresh] as RecipeSearchResult[]);
+      const merged = [...mergedBase, ...fresh] as RecipeSearchResult[];
       merged.sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice);
       finalResults = merged.slice(0, limit);
     }
   }
 
-  // ── Final guarantee — never return empty; top up to minimum 5 ────────────
+  // ── STEP 5: Fallback guarantee — never return empty ───────────────────────
   if (finalResults.length === 0) {
+    console.log('[SEARCH_FALLBACK] Using deterministic fallback recipes');
     finalResults = generateFallbackRecipes(intent) as RecipeSearchResult[];
   } else if (hasQuery && finalResults.length < 5) {
     const existingIds = new Set(finalResults.map((r) => r.id));
@@ -393,37 +371,40 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
     finalResults = [...finalResults, ...topUp].slice(0, 5);
   }
 
-  // ── Result shaping — dedup, diversity, guaranteed images ─────────────────
+  // ── STEP 6: Shape — dedup titles, diversity caps, guaranteed images ────────
   finalResults = shapeResults(finalResults, limit) as RecipeSearchResult[];
 
   const fallbackUsed = finalResults.some((r) => r.id.startsWith('fallback-'));
-  console.log('[SEARCH_PIPELINE]', {
+
+  console.log('[SEARCH_RESULT]', {
     query,
     dbCount: dbResults.length,
+    mealdbCount,
     aiCount: aiResults.length,
     finalCount: finalResults.length,
     fallbackUsed,
   });
 
-  // ── STEP 8: Build meta from authoritative intent + final result set ────────
   const estimatedTotal = parseFloat(
     finalResults.reduce((sum, r) => sum + r.adjustedPrice, 0).toFixed(2),
   );
 
-  const meta: SearchMeta = {
-    servings: intent.servings ?? null,
-    budgetTotal: intent.budgetTotal ?? null,
-    estimatedTotal,
-    isServingQuery: intent.servings !== undefined,
-    isBudgeted: intent.budgetTotal !== undefined,
-    dietTags: intent.dietTags,
-    intentFlags: intent.intentFlags,
-    dbCount: dbResults.length,
-    aiCount: aiResults.length,
-    realApiCount: realApiResults.length,
-    fallbackUsed,
-    totalCount: finalResults.length,
+  return {
+    results: finalResults,
+    meta: {
+      servings: intent.servings ?? null,
+      budgetTotal: intent.budgetTotal ?? null,
+      estimatedTotal,
+      isServingQuery: intent.servings !== undefined,
+      isBudgeted: intent.budgetTotal !== undefined,
+      dietTags: intent.dietTags,
+      intentFlags: intent.intentFlags,
+      dbCount: dbResults.length,
+      mealdbCount,
+      aiCount: aiResults.length,
+      realApiCount: 0,
+      fallbackUsed,
+      totalCount: finalResults.length,
+    },
   };
-
-  return { results: finalResults, meta };
 }

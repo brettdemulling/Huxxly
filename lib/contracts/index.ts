@@ -74,7 +74,9 @@ export interface SearchMeta {
   dietTags: string[];
   intentFlags: string[];
   dbCount: number;
+  mealdbCount?: number;
   aiCount: number;
+  realApiCount?: number;
   fallbackUsed: boolean;
   totalCount: number;
 }

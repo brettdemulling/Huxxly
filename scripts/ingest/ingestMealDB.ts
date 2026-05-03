@@ -11,6 +11,19 @@
  *   "ingest:mealdb": "jiti scripts/ingest/ingestMealDB.ts"
  */
 
+// Load .env.local if DATABASE_URL is not already in the environment
+import fs from 'fs';
+import path from 'path';
+if (!process.env.DATABASE_URL) {
+  const envPath = path.join(__dirname, '../../.env.local');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^([^#=\s]+)\s*=\s*"?([^"]*)"?\s*$/);
+      if (m) process.env[m[1]] = m[2];
+    }
+  }
+}
+
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
