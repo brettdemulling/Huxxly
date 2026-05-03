@@ -2,7 +2,10 @@ export const runtime = {
   isRedisEnabled: Boolean(
     process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN,
   ),
-  isAIEnabled: Boolean(process.env.ANTHROPIC_API_KEY),
+  isAIEnabled: (() => {
+    const key = process.env.ANTHROPIC_API_KEY ?? '';
+    return key.length > 0 && !key.includes('simulation') && !key.includes('fake') && !key.includes('dev');
+  })(),
   isQStashEnabled: Boolean(
     process.env.QSTASH_TOKEN && process.env.NEXT_PUBLIC_APP_URL,
   ),

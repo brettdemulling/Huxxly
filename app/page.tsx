@@ -153,7 +153,8 @@ export default function Home() {
     setSearchState('LOADING');
     const effectiveQuery = buildDietaryQuery(q, diets ?? selectedDiets);
     try {
-      const res = await fetch(`/api/recipes?q=${encodeURIComponent(effectiveQuery)}&limit=20`);
+      const servingsParam = globalServings ? `&servings=${globalServings}` : '';
+      const res = await fetch(`/api/recipes?q=${encodeURIComponent(effectiveQuery)}&limit=20${servingsParam}`);
       if (!res.ok) { setRecipes([]); setSearchMeta(null); setSearchState('ERROR'); return; }
       const data = await res.json() as { recipes: RecipeViewModel[]; meta: SearchMeta | null };
       console.log('[INTENT]', data.meta);
@@ -168,7 +169,7 @@ export default function Home() {
       setSearchState('ERROR');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDiets]);
+  }, [selectedDiets, globalServings]);
 
   // Restore persisted store state from sessionStorage on mount
   useEffect(() => {

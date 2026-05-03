@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { generateRecipesFromIntent } from '@/lib/ai/generateRecipes';
 import { generateFallbackRecipes } from '@/lib/ai/generateFallbackRecipes';
 import { shapeResults } from '@/lib/search/resultShaper';
-import { rankResults } from '@/lib/search/ranking';
+import { rankResults, scoreResult } from '@/lib/search/ranking';
 import { searchRecipes as searchMealDB } from '@/lib/providers/mealdb/MealDBProvider';
 import { normalizeManyMealDBRecipes } from '@/lib/providers/mealdb/normalizeMealDBRecipe';
 import { batchUpsertMealDB } from '@/lib/repositories/MealDBRecipeRepository';
@@ -235,16 +235,26 @@ async function queryAndScoreDB(intent: ParsedIntent, limit: number): Promise<Rec
       result: toSearchResult(r, ap, 0, intent.servings),
       r,
     }))
-    .map(({ result, r }) => {
+    .map(({ result }) => {
       if (!hasQuery) return { ...result, score: 1 };
-      const ranked = rankResults([result], rankCtx);
-      return ranked[0] ?? result;
+      return { ...result, score: scoreResult(result, rankCtx) };
     })
     .filter((r) => !hasQuery || r.score > 0)
     .sort((a, b) => b.score - a.score || a.adjustedPrice - b.adjustedPrice)
     .slice(0, limit);
 
   return ranked;
+}
+
+// ─── MealDB query extraction ──────────────────────────────────────────────────
+
+function extractPrimaryIngredient(query: string, intent: ParsedIntent): string {
+  if (intent.ingredients.length > 0) return intent.ingredients[0];
+  const dietWords = new Set(intent.dietTags.flatMap((t) => t.split('-')));
+  const intentWords = new Set(intent.intentFlags.flatMap((f) => f.split('-')));
+  const foodToken = intent.rawTokens.find((t) => !dietWords.has(t) && !intentWords.has(t));
+  if (foodToken) return foodToken;
+  return query.trim();
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -266,7 +276,9 @@ export async function searchRecipes(query: string, limit = 20): Promise<SearchRe
   if (hasQuery && dbResults.length < MEALDB_THRESHOLD) {
     console.log(`[MEALDB_FETCH] DB sparse (${dbResults.length} < ${MEALDB_THRESHOLD}), calling MealDB...`);
     try {
-      const meals = await searchMealDB(query.trim());
+      const primaryIngredient = extractPrimaryIngredient(query, intent);
+      console.log(`[MEALDB_FETCH] Querying MealDB with: "${primaryIngredient}"`);
+      const meals = await searchMealDB(primaryIngredient);
       if (meals.length > 0) {
         // Normalize
         const normalized = normalizeManyMealDBRecipes(meals);

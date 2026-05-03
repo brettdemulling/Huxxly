@@ -2,8 +2,6 @@
  * RecipeViewModel — the single contract between backend and frontend.
  * Frontend NEVER consumes raw DB or AI objects directly.
  */
-import { resolveImage } from '@/lib/media/imageResolver';
-
 export interface RecipeViewModel {
   id: string;
   title: string;
@@ -64,13 +62,7 @@ export function toRecipeViewModel(
   return {
     id: result.id,
     title: result.title,
-    image: resolveImage({
-      imageUrl: result.imageUrl,
-      tags: result.tags,
-      category: result.category,
-      cuisine: result.cuisine,
-      title: result.title,
-    }),
+    image: result.imageUrl ?? 'https://placehold.co/480x200/059669/FFFFFF?text=Recipe',
     cookTime: result.cookTimeMinutes ?? 0,
     servings,
     pricePerServing,
